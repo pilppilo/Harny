@@ -1,0 +1,58 @@
+[
+  {
+    "id": "sh-curl-pipe-sh",
+    "language": "shell",
+    "vulnerable": true,
+    "cwes": ["CWE-494", "CWE-78"],
+    "code": "#!/usr/bin/env bash\nset -euo pipefail\n\ninstall_tool() {\n  curl -fsSL https://example.com/install.sh | sh\n}\n\ninstall_tool\n"
+  },
+  {
+    "id": "sh-eval-userinput",
+    "language": "shell",
+    "vulnerable": true,
+    "cwes": ["CWE-95"],
+    "code": "#!/usr/bin/env bash\nread -r USER_INPUT\neval \"$USER_INPUT\"\n"
+  },
+  {
+    "id": "sh-rmrf-var",
+    "language": "shell",
+    "vulnerable": true,
+    "cwes": ["CWE-78"],
+    "code": "#!/usr/bin/env bash\nTARGET_DIR=\"$1\"\nrm -rf \"$TARGET_DIR/cache\"\n"
+  },
+  {
+    "id": "sh-tmp-race",
+    "language": "shell",
+    "vulnerable": true,
+    "cwes": ["CWE-377"],
+    "code": "#!/usr/bin/env bash\nLOG=/tmp/distro-setup.log\necho \"$USER_INPUT\" > \"$LOG\"\ncat \"$LOG\"\n"
+  },
+  {
+    "id": "sh-hardcoded-token",
+    "language": "shell",
+    "vulnerable": true,
+    "cwes": ["CWE-798"],
+    "code": "#!/usr/bin/env bash\nGITHUB_TOKEN=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ123456\n curl -H \"Authorization: token $GITHUB_TOKEN\" https://api.github.com/user\n"
+  },
+  {
+    "id": "sh-download-chmod-exec",
+    "language": "shell",
+    "vulnerable": true,
+    "cwes": ["CWE-494"],
+    "code": "#!/usr/bin/env bash\nset -euo pipefail\n\ncurl -fsSL -o /tmp/tool https://example.com/tool\nchmod +x /tmp/tool\n/tmp/tool --install\n"
+  },
+  {
+    "id": "sh-checked-download-clean",
+    "language": "shell",
+    "vulnerable": false,
+    "cwes": [],
+    "code": "#!/usr/bin/env bash\nset -euo pipefail\n\nEXPECTED=\"sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08\"\ncurl -fsSL -o /tmp/tool.tmp https://example.com/tool\necho \"${EXPECTED#sha256:}  /tmp/tool.tmp\" | sha256sum -c -\nmv /tmp/tool.tmp \"$HOME/.local/bin/tool\"\nchmod 0755 \"$HOME/.local/bin/tool\"\n"
+  },
+  {
+    "id": "sh-quoted-clean",
+    "language": "shell",
+    "vulnerable": false,
+    "cwes": [],
+    "code": "#!/usr/bin/env bash\nset -euo pipefail\n\nbackup() {\n  local dest=\"$1\"\n  mkdir -p -- \"$dest/current\"\n  cp -a -- \"$HOME/.config/.\" \"$dest/current/\"\n}\n\nbackup \"${1:?usage: backup DEST}\"\n"
+  }
+]

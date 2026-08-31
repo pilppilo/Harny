@@ -1,0 +1,44 @@
+[
+  {
+    "id": "sudoers-nopasswd-wildcard",
+    "language": "sudoers",
+    "vulnerable": true,
+    "cwes": ["CWE-732"],
+    "code": "%wheel ALL=(ALL) NOPASSWD: /usr/bin/distro-set-browser-policy *\n"
+  },
+  {
+    "id": "systemd-root-nohardening",
+    "language": "systemd",
+    "vulnerable": true,
+    "cwes": ["CWE-732"],
+    "code": "[Unit]\nDescription=Distro background service\n\n[Service]\nType=simple\nExecStart=/usr/bin/distro-daemon\nUser=root\n\n[Install]\nWantedBy=multi-user.target\n"
+  },
+  {
+    "id": "udev-world-writable",
+    "language": "udev",
+    "vulnerable": true,
+    "cwes": ["CWE-732"],
+    "code": "KERNEL==\"uinput\", SUBSYSTEM==\"misc\", MODE=\"0666\", OPTIONS+=\"static_node=uinput\"\n"
+  },
+  {
+    "id": "sysctl-weak",
+    "language": "sysctl",
+    "vulnerable": true,
+    "cwes": ["CWE-693"],
+    "code": "kernel.kptr_restrict = 0\nkernel.dmesg_restrict = 0\nnet.ipv4.conf.all.accept_source_route = 1\n"
+  },
+  {
+    "id": "sudoers-scoped-clean",
+    "language": "sudoers",
+    "vulnerable": false,
+    "cwes": [],
+    "code": "%wheel ALL=(root) NOPASSWD: /usr/bin/dns-helper\n"
+  },
+  {
+    "id": "systemd-hardened-clean",
+    "language": "systemd",
+    "vulnerable": false,
+    "cwes": [],
+    "code": "[Unit]\nDescription=Distro user helper\n\n[Service]\nType=simple\nExecStart=/usr/bin/distro-helper\nUser=helper\nDynamicUser=yes\nNoNewPrivileges=yes\nProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\nRestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\n\n[Install]\nWantedBy=multi-user.target\n"
+  }
+]

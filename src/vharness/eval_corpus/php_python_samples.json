@@ -1,0 +1,58 @@
+[
+  {
+    "id": "php-sqli-concat",
+    "language": "php",
+    "vulnerable": true,
+    "cwes": ["CWE-89"],
+    "code": "<?php\nfunction findUser($db, $username) {\n    $q = \"SELECT * FROM users WHERE name = '\" . $_GET['name'] . \"'\";\n    return mysqli_query($db, $q);\n}\n"
+  },
+  {
+    "id": "php-unserialize-cookie",
+    "language": "php",
+    "vulnerable": true,
+    "cwes": ["CWE-502"],
+    "code": "<?php\nfunction loadSession() {\n    $data = unserialize($_COOKIE['session']);\n    return $data['user'];\n}\n"
+  },
+  {
+    "id": "py-os-system",
+    "language": "python",
+    "vulnerable": true,
+    "cwes": ["CWE-78"],
+    "code": "import os\n\ndef convert(upload_name):\n    os.system(f'convert {upload_name} thumb.png')\n"
+  },
+  {
+    "id": "py-pickle-load",
+    "language": "python",
+    "vulnerable": true,
+    "cwes": ["CWE-502"],
+    "code": "import pickle\n\ndef load_profile(request):\n    raw = request.data['profile']\n    return pickle.loads(raw)\n"
+  },
+  {
+    "id": "py-sql-fstring",
+    "language": "python",
+    "vulnerable": true,
+    "cwes": ["CWE-89"],
+    "code": "def get_user(cursor, username):\n    cursor.execute(f\"SELECT * FROM users WHERE name = '{username}'\")\n    return cursor.fetchone()\n"
+  },
+  {
+    "id": "py-yaml-load",
+    "language": "python",
+    "vulnerable": true,
+    "cwes": ["CWE-502"],
+    "code": "import yaml\n\ndef parse_config(request_body):\n    return yaml.load(request_body)\n"
+  },
+  {
+    "id": "py-parameterized-clean",
+    "language": "python",
+    "vulnerable": false,
+    "cwes": [],
+    "code": "def get_user(cursor, username):\n    cursor.execute('SELECT * FROM users WHERE name = %s', (username,))\n    return cursor.fetchone()\n"
+  },
+  {
+    "id": "php-prepared-clean",
+    "language": "php",
+    "vulnerable": false,
+    "cwes": [],
+    "code": "<?php\nfunction findUser($db, $name) {\n    $stmt = $db->prepare('SELECT * FROM users WHERE name = ?');\n    $stmt->bind_param('s', $name);\n    $stmt->execute();\n    return $stmt->get_result();\n}\n"
+  }
+]

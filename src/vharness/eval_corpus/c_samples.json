@@ -1,0 +1,37 @@
+[
+  {
+    "id": "c-strcpy-overflow",
+    "language": "c",
+    "vulnerable": true,
+    "cwes": ["CWE-120", "CWE-787"],
+    "code": "#include <string.h>\n\nvoid greet(char *name) {\n    char buf[64];\n    strcpy(buf, name);\n    printf(\"Hello %s\\n\", buf);\n}\n"
+  },
+  {
+    "id": "c-system-injection",
+    "language": "c",
+    "vulnerable": true,
+    "cwes": ["CWE-78"],
+    "code": "#include <stdlib.h>\n\nvoid ping_host(const char *host) {\n    char cmd[256];\n    snprintf(cmd, sizeof(cmd), \"ping -c 1 %s\", host);\n    system(cmd);\n}\n"
+  },
+  {
+    "id": "c-format-string",
+    "language": "c",
+    "vulnerable": true,
+    "cwes": ["CWE-134"],
+    "code": "#include <stdio.h>\n\nvoid log_msg(char *user_input) {\n    char buf[512];\n    snprintf(buf, sizeof(buf), user_input);\n    fprintf(stderr, buf);\n}\n"
+  },
+  {
+    "id": "c-bounded-copy-clean",
+    "language": "c",
+    "vulnerable": false,
+    "cwes": [],
+    "code": "#include <string.h>\n\nvoid greet(const char *name) {\n    char buf[64];\n    if (strlen(name) >= sizeof(buf)) {\n        return;\n    }\n    snprintf(buf, sizeof(buf), \"Hello %s\", name);\n    puts(buf);\n}\n"
+  },
+  {
+    "id": "c-safe-arith-clean",
+    "language": "c",
+    "vulnerable": false,
+    "cwes": [],
+    "code": "#include <stdlib.h>\n#include <stdint.h>\n\nint sum_items(const int *items, size_t n) {\n    if (n > SIZE_MAX / sizeof(int) || items == NULL) {\n        return -1;\n    }\n    int total = 0;\n    for (size_t i = 0; i < n; i++) {\n        total += items[i];\n    }\n    return total;\n}\n"
+  }
+]

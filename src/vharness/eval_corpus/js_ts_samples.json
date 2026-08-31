@@ -1,0 +1,44 @@
+[
+  {
+    "id": "js-eval-userinput",
+    "language": "js",
+    "vulnerable": true,
+    "cwes": ["CWE-95"],
+    "code": "app.post('/calc', (req, res) => {\n  const result = eval(req.body.expression);\n  res.json({ result });\n});\n"
+  },
+  {
+    "id": "js-child-process-exec",
+    "language": "js",
+    "vulnerable": true,
+    "cwes": ["CWE-78"],
+    "code": "const { exec } = require('child_process');\n\napp.get('/dns-lookup', (req, res) => {\n  exec(`nslookup ${req.query.host}`, (err, stdout) => {\n    res.send(stdout);\n  });\n});\n"
+  },
+  {
+    "id": "js-innerhtml-xss",
+    "language": "js",
+    "vulnerable": true,
+    "cwes": ["CWE-79"],
+    "code": "function renderComment(comment) {\n  const el = document.getElementById('comments');\n  el.innerHTML = `<div class=\"comment\">${comment.body}</div>`;\n}\n"
+  },
+  {
+    "id": "ts-execsync-path",
+    "language": "ts",
+    "vulnerable": true,
+    "cwes": ["CWE-78"],
+    "code": "import { execSync } from 'child_process';\n\nexport function convertFile(userPath: string): string {\n  return execSync(`convert ${userPath} out.png`).toString();\n}\n"
+  },
+  {
+    "id": "js-textcontent-clean",
+    "language": "js",
+    "vulnerable": false,
+    "cwes": [],
+    "code": "function renderComment(comment) {\n  const el = document.createElement('div');\n  el.className = 'comment';\n  el.textContent = comment.body;\n  document.getElementById('comments').appendChild(el);\n}\n"
+  },
+  {
+    "id": "ts-spawn-args-clean",
+    "language": "ts",
+    "vulnerable": false,
+    "cwes": [],
+    "code": "import { spawn } from 'child_process';\n\nexport function dnsLookup(host: string) {\n  const proc = spawn('nslookup', [host], { shell: false });\n  proc.stdout.on('data', (d) => process.stdout.write(d));\n}\n"
+  }
+]
