@@ -39,8 +39,10 @@ def _frontmatter(text: str, path: Path) -> tuple[dict[str, str], str]:
         if not line.strip() or line.lstrip().startswith("#"):
             continue
         key, sep, value = line.partition(":")
-        if not sep or key.strip() not in {"name", "description"}:
-            raise SkillError(f"{path}: frontmatter supports name and description only")
+        if not sep:
+            raise SkillError(f"{path}: malformed frontmatter line")
+        if key.strip() not in {"name", "description"}:
+            continue
         value = value.strip()
         if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
             value = value[1:-1]
@@ -73,7 +75,7 @@ def load_skill(root: str | os.PathLike[str]) -> Skill:
     if size > MAX_SKILL_BYTES:
         raise SkillError(f"{skill_path}: exceeds {MAX_SKILL_BYTES} byte limit")
     raw = skill_path.read_bytes()
-    text = raw.decode("utf-8")
+    text = raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
     meta, body = _frontmatter(text, skill_path)
     return Skill(meta["name"], meta["description"], body,
                  str(skill_path), hashlib.sha256(raw).hexdigest())
@@ -91,4 +93,3 @@ def render_skill_instructions(skills: list[Skill] | tuple[Skill, ...]) -> str:
 
 def load_skills(paths: list[str] | tuple[str, ...] | None) -> list[Skill]:
     return [load_skill(path) for path in (paths or [])]
-
