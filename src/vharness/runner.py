@@ -20,6 +20,7 @@ from .core import (
 )
 from .generators.base import Generator
 from .log import log
+from .skills import Skill, render_skill_instructions
 
 # Built-ins register when the stage packages are imported.
 from . import detectors  # noqa: F401,E402
@@ -44,8 +45,10 @@ class RunInfo:
     ok: int = 0
     parse_errors: int = 0
     api_errors: int = 0
+    internal_errors: int = 0
     skipped: int = 0
     findings: int = 0
+    skills: list[dict] | None = None
 
 
 class Runner:
@@ -57,6 +60,7 @@ class Runner:
         workers: int = 4,
         log_file: str | None = None,
         log_raw: bool = False,
+        skills: list[Skill] | None = None,
     ) -> None:
         load_entry_points()  # third-party plugins, idempotent
         self.generator = generator
@@ -64,6 +68,8 @@ class Runner:
         self.workers = workers
         self.log_file = log_file
         self.log_raw = log_raw
+        self.skills = list(skills or [])
+        self._skill_instructions = render_skill_instructions(self.skills)
         self._log_lock = threading.Lock()
         if log_file:
             os.makedirs(os.path.dirname(os.path.abspath(log_file)), exist_ok=True)
@@ -78,6 +84,22 @@ class Runner:
         run_id: str | None = None,
     ) -> tuple[list[Attempt], RunInfo]:
         """Execute a full pipeline pass; returns (attempts, run_info)."""
+        self._fh = open(self.log_file, "a", encoding="utf-8") if self.log_file else None
+        try:
+            return self._run_impl(probe_names, probe_kwargs, dry_run=dry_run, run_id=run_id)
+        finally:
+            if getattr(self, "_fh", None) is not None:
+                self._fh.close()
+                self._fh = None
+
+    def _run_impl(
+        self,
+        probe_names: list[str],
+        probe_kwargs: dict | None = None,
+        *,
+        dry_run: bool = False,
+        run_id: str | None = None,
+    ) -> tuple[list[Attempt], RunInfo]:
         probe_kwargs = probe_kwargs or {}
         attempts: list[Attempt] = []
         for name in probe_names:
@@ -85,6 +107,10 @@ class Runner:
             got = probe.attempts(**probe_kwargs)
             for a in got:
                 a.probe = name
+                if self._skill_instructions:
+                    a.system = (a.system.rstrip() + self._skill_instructions)
+                    a.context = dict(a.context)
+                    a.context["skills"] = [s.metadata() for s in self.skills]
             attempts.extend(got)
 
         info = RunInfo(
@@ -97,11 +123,12 @@ class Runner:
             dry_run=dry_run,
             started_at=time.time(),
             attempts_total=len(attempts),
+            skills=[s.metadata() for s in self.skills] or None,
         )
         self._log_event({"type": "run_start", "run_id": info.run_id, "ts": time.time(),
                          "probes": info.probes, "targets": info.targets,
                          "attempts": len(attempts), "dry_run": dry_run,
-                         "detectors": info.detectors})
+                         "detectors": info.detectors, "skills": info.skills})
         if dry_run:
             info.wall_seconds = time.time() - info.started_at
             self._log_event({"type": "run_end", "run_id": info.run_id, "ts": time.time(),
@@ -147,13 +174,14 @@ class Runner:
             info.ok += a.status == "ok"
             info.parse_errors += a.status == "parse_error"
             info.api_errors += a.status == "api_error"
+            info.internal_errors += a.status == "internal_error"
             info.skipped += a.status == "skipped"
             info.findings += len(a.findings)
         info.wall_seconds = time.time() - info.started_at
         self._log_event({"type": "run_end", "run_id": info.run_id, "ts": time.time(),
                          "status": "complete", "attempts": info.attempts_total,
                          "ok": info.ok, "parse_errors": info.parse_errors,
-                         "api_errors": info.api_errors, "internal_errors": len(done) - info.ok - info.parse_errors - info.api_errors - info.skipped,
+                         "api_errors": info.api_errors, "internal_errors": info.internal_errors,
                          "findings": info.findings, "wall_seconds": info.wall_seconds})
         return done, info
 
@@ -165,14 +193,14 @@ class Runner:
 
     # ---- logging ---------------------------------------------------------
     def _log_event(self, record: dict) -> None:
-        if not self.log_file:
+        if not hasattr(self, "_fh") or self._fh is None:
             return
         with self._log_lock:
-            with open(self.log_file, "a", encoding="utf-8") as fh:
-                fh.write(json.dumps(record, default=str) + "\n")
+            self._fh.write(json.dumps(record, default=str) + "\n")
+            self._fh.flush()
 
     def _log(self, attempt: Attempt, info: RunInfo) -> None:
-        if not self.log_file:
+        if not hasattr(self, "_fh") or self._fh is None:
             return
         rec = {
             "type": "attempt",
@@ -209,5 +237,5 @@ class Runner:
                 rec["generation_text"] = attempt.generation.text
         line = json.dumps(rec, default=str)
         with self._log_lock:
-            with open(self.log_file, "a", encoding="utf-8") as fh:
-                fh.write(line + "\n")
+            self._fh.write(line + "\n")
+            self._fh.flush()

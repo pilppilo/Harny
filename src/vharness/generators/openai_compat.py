@@ -145,6 +145,9 @@ class OpenAICompatible(Generator):
                     self.stats["prompt_tokens"] += getattr(usage, "prompt_tokens", 0) or 0
                     self.stats["completion_tokens"] += getattr(usage, "completion_tokens", 0) or 0
 
+            if not getattr(response, "choices", None):
+                last_error = "endpoint returned empty choices (content filter?)"
+                break
             raw = (response.choices[0].message.content or "").strip()
             finish = response.choices[0].finish_reason
             if finish == "length" and attempt < total_attempts - 1:

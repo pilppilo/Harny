@@ -107,10 +107,10 @@ class Summary(Evaluator):
         info = run_info.get("run_info")
         if info is not None:
             log.info(
-                "run %s: probes=%s attempts=%s ok=%s parse_errors=%s api_errors=%s "
+                "run %s: probes=%s attempts=%s ok=%s parse_errors=%s api_errors=%s internal_errors=%s "
                 "findings=%s wall=%.1fs",
                 info.run_id, info.probes, info.attempts_total, info.ok,
-                info.parse_errors, info.api_errors, info.findings, info.wall_seconds,
+                info.parse_errors, info.api_errors, info.internal_errors, info.findings, info.wall_seconds,
             )
         gen = run_info.get("generator_summary")
         if gen:

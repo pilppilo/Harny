@@ -24,6 +24,7 @@ from .core import (
 )
 from .log import log, setup as log_setup
 from .runner import Runner
+from .skills import SkillError, load_skills
 
 #: Probes used by the ``scan`` preset (filesystem code scanning).
 SCAN_PROBES = ["ccpp", "web", "shell", "distroconf"]
@@ -101,12 +102,17 @@ def _runner(args) -> Runner:
     generator = _LazyGenerator(args)
     detectors = getattr(args, "detectors", None) or ["json-verdict"]
     log_file = None if getattr(args, "no_log", False) else getattr(args, "log_file", None)
+    try:
+        skills = load_skills(getattr(args, "skill", None))
+    except (SkillError, OSError, UnicodeError) as e:
+        raise CLIError(str(e)) from e
     return Runner(
         generator,
         detectors=detectors,
         workers=args.workers,
         log_file=log_file,
         log_raw=getattr(args, "log_raw", False),
+        skills=skills,
     )
 
 
@@ -164,7 +170,8 @@ def cmd_run(args) -> int:
             log.info("  … and %d more", len(attempts) - 50)
         return 0
 
-    run_info = vars(info) | run_info_extra | {"run_info": info}
+    import dataclasses
+    run_info = dataclasses.asdict(info) | run_info_extra | {"run_info": info}
     runner.evaluate(attempts, run_info, evaluator_names)
     if getattr(args, "fail_on_findings", False) and any(a.findings for a in attempts):
         log.info("fail-on-findings: %d finding(s) present — exiting 1", sum(len(a.findings) for a in attempts))
@@ -207,6 +214,27 @@ def cmd_list(args) -> int:
     return 0
 
 
+def cmd_list_skills(args) -> int:
+    """List valid skills from explicit directories or their child directories."""
+    roots = args.paths or ["."]
+    found = []
+    for root in roots:
+        path = os.path.abspath(os.path.expanduser(root))
+        candidates = [path]
+        if os.path.isdir(path):
+            candidates.extend(os.path.join(path, n) for n in sorted(os.listdir(path)))
+        for candidate in candidates:
+            try:
+                skill = load_skills([candidate])[0]
+            except (SkillError, OSError, UnicodeError):
+                continue
+            if skill.path not in {s.path for s in found}:
+                found.append(skill)
+    for skill in found:
+        print(f"{skill.name}\t{skill.description}\t{skill.path}")
+    return 0
+
+
 def cmd_replay(args) -> int:
     """Re-apply detectors to a previous run log — no model calls.
 
@@ -215,11 +243,17 @@ def cmd_replay(args) -> int:
     log record lacks `generation_text` are reported as skipped.
     """
     from .core import Attempt, Finding, Generation
+    from .runner import RunInfo
     from vharness.detectors.json_verdict import JSONVerdict
 
     attempts: list[Attempt] = []
     skipped = 0
-    with open(args.log_path, encoding="utf-8") as fh:
+    try:
+        fh = open(args.log_path, encoding="utf-8")
+    except OSError as e:
+        raise CLIError(f"log file not found or unreadable: {args.log_path}") from e
+
+    with fh:
         for line in fh:
             line = line.strip()
             if not line:
@@ -232,7 +266,8 @@ def cmd_replay(args) -> int:
                 continue
             if args.run_id and rec.get("run_id") != args.run_id:
                 continue
-            if not rec.get("generation_text") and not rec.get("generation", {}).get("error"):
+            gen_data = rec.get("generation") or {}
+            if not rec.get("generation_text") and not gen_data.get("error"):
                 skipped += 1
                 continue
             a = Attempt(
@@ -246,9 +281,9 @@ def cmd_replay(args) -> int:
             a.id = rec.get("id", a.id)
             a.record(Generation(
                 text=rec.get("generation_text", ""),
-                model=rec.get("generation", {}).get("model", ""),
-                finish_reason=rec.get("generation", {}).get("finish_reason", ""),
-                error=rec.get("generation", {}).get("error"),
+                model=gen_data.get("model", ""),
+                finish_reason=gen_data.get("finish_reason", ""),
+                error=gen_data.get("error"),
             ))
             if rec.get("expected_verdict"):
                 a.expected_verdict = rec["expected_verdict"]
@@ -267,30 +302,28 @@ def cmd_replay(args) -> int:
     for a in attempts:
         detector.detect(a)
 
-    info = {"run_id": args.run_id or "replay", "probes": ["replay"], "generator": "replay",
-            "dry_run": False, "attempts_total": len(attempts)}
     ok = sum(a.status == "ok" for a in attempts)
     parse_errors = sum(a.status == "parse_error" for a in attempts)
     api_errors = sum(a.status == "api_error" for a in attempts)
     findings = sum(len(a.findings) for a in attempts)
 
-    class _Info:  # minimal RunInfo-shaped object for evaluators
-        def __init__(self):
-            self.run_id = args.run_id or "replay"
-            self.probes = ["replay"]
-            self.generator = "replay"
-            self.model = "replay"
-            self.attempts_total = len(attempts)
-            self.ok = ok
-            self.parse_errors = parse_errors
-            self.api_errors = api_errors
-            self.skipped = skipped
-            self.findings = findings
-            self.wall_seconds = 0.0
-            self.dry_run = False
+    run_info_obj = RunInfo(
+        run_id=args.run_id or "replay",
+        probes=["replay"],
+        generator="replay",
+        model="replay",
+        attempts_total=len(attempts),
+        ok=ok,
+        parse_errors=parse_errors,
+        api_errors=api_errors,
+        skipped=skipped,
+        findings=findings,
+        dry_run=False,
+    )
 
-    run_info = {
-        "run_info": _Info(),
+    import dataclasses
+    run_info = dataclasses.asdict(run_info_obj) | {
+        "run_info": run_info_obj,
         "out": args.out,
         "sarif_out": getattr(args, "sarif_out", None),
         "markdown_out": getattr(args, "markdown_out", None),
@@ -317,6 +350,14 @@ class _NeverGenerate:
         raise RuntimeError("replay must not generate")
 
 
+def _common_args(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--fail-on-findings", action="store_true",
+                   help="exit 1 if any findings were produced (for CI)")
+    p.add_argument("-v", "--verbose", action="count", default=0,
+                   help="verbosity: -v shows operational/progress, -vv debug (repeatable)")
+    p.add_argument("-q", "--quiet", action="store_true", help="suppress log output (errors still exit non-zero)")
+
+
 def _generator_args(p: argparse.ArgumentParser, include_model: bool = True) -> None:
     p.add_argument("--generator", default="openai", help="openai | mock | any registered generator")
     if include_model:
@@ -335,13 +376,11 @@ def _generator_args(p: argparse.ArgumentParser, include_model: bool = True) -> N
     p.add_argument("--log-file", default=None, help="JSONL run log path")
     p.add_argument("--log-raw", action="store_true", help="include prompts and raw model text in the JSONL log")
     p.add_argument("--no-log", action="store_true")
+    p.add_argument("--skill", action="append", default=[], metavar="DIR",
+                   help="local skill directory containing SKILL.md (repeatable)")
     p.add_argument("--mock-script", action="append", default=[], metavar="KEY=REPLY",
                    help="mock generator: exact-substring key → canned reply (repeatable)")
-    p.add_argument("--fail-on-findings", action="store_true",
-                   help="exit 1 if any findings were produced (for CI)")
-    p.add_argument("-v", "--verbose", action="count", default=0,
-                   help="verbosity: -v shows operational/progress, -vv debug (repeatable)")
-    p.add_argument("-q", "--quiet", action="store_true", help="suppress log output (errors still exit non-zero)")
+    _common_args(p)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -395,11 +434,15 @@ def build_parser() -> argparse.ArgumentParser:
     replay_p.add_argument("--markdown-out", default=None)
     replay_p.add_argument("--json-out", default=None)
     replay_p.add_argument("--metrics-out", default=None)
-    _generator_args(replay_p, include_model=False)
+    _common_args(replay_p)
     replay_p.set_defaults(func=cmd_replay)
 
     list_p = sub.add_parser("list", help="list registered plugins")
     list_p.set_defaults(func=cmd_list)
+
+    skills_p = sub.add_parser("list-skills", help="list valid local SKILL.md directories")
+    skills_p.add_argument("paths", nargs="*", help="skill directories or directories to search")
+    skills_p.set_defaults(func=cmd_list_skills)
 
     return parser
 
@@ -409,9 +452,6 @@ def main(argv: list[str] | None = None) -> int:
     log_setup(getattr(args, "verbose", 0), getattr(args, "quiet", False))
     try:
         return args.func(args)
-    except CLIError as e:
-        log.error("%s", e)
-        return 2
-    except ConfigError as e:
-        log.error("%s", e)
+    except (CLIError, ConfigError) as e:
+        print(f"error: {e}", file=sys.stderr)
         return 2

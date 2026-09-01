@@ -1,0 +1,475 @@
+{
+  "metrics": {
+    "labeled": 35,
+    "tp": 3,
+    "fp": 0,
+    "tn": 11,
+    "fn": 21,
+    "precision": 1.0,
+    "recall": 0.125,
+    "f1": 0.2222,
+    "clean_total": 11,
+    "fp_rate_clean": 0.0,
+    "cwe_labeled": 3,
+    "cwe_match": 3,
+    "cwe_accuracy": 1.0,
+    "per_cwe_recall": {
+      "CWE-120": 0.0,
+      "CWE-134": 0.0,
+      "CWE-377": 0.0,
+      "CWE-494": 0.5,
+      "CWE-502": 0.0,
+      "CWE-693": 0.0,
+      "CWE-732": 0.0,
+      "CWE-78": 0.1667,
+      "CWE-787": 0.0,
+      "CWE-79": 0.0,
+      "CWE-798": 0.0,
+      "CWE-89": 0.0,
+      "CWE-95": 0.3333
+    }
+  },
+  "per_sample": [
+    {
+      "id": "6dabb46d474b",
+      "source": "c-strcpy-overflow",
+      "probe": "corpus",
+      "expected": "vulnerable",
+      "predicted": "clean",
+      "expected_cwes": [
+        "CWE-120",
+        "CWE-787"
+      ],
+      "predicted_cwes": [],
+      "status": "ok",
+      "notes": []
+    },
+    {
+      "id": "9ee9edf89010",
+      "source": "c-system-injection",
+      "probe": "corpus",
+      "expected": "vulnerable",
+      "predicted": "clean",
+      "expected_cwes": [
+        "CWE-78"
+      ],
+      "predicted_cwes": [],
+      "status": "ok",
+      "notes": []
+    },
+    {
+      "id": "11ebfa35a494",
+      "source": "c-format-string",
+      "probe": "corpus",
+      "expected": "vulnerable",
+      "predicted": "clean",
+      "expected_cwes": [
+        "CWE-134"
+      ],
+      "predicted_cwes": [],
+      "status": "ok",
+      "notes": []
+    },
+    {
+      "id": "d104da55ffff",
+      "source": "c-bounded-copy-clean",
+      "probe": "corpus",
+      "expected": "clean",
+      "predicted": "clean",
+      "expected_cwes": [],
+      "predicted_cwes": [],
+      "status": "ok",
+      "notes": []
+    },
+    {
+      "id": "0557fdaf6779",
+      "source": "c-safe-arith-clean",
+      "probe": "corpus",
+      "expected": "clean",
+      "predicted": "clean",
+      "expected_cwes": [],
+      "predicted_cwes": [],
+      "status": "ok",
+      "notes": []
+    },
+    {
+      "id": "d0e82e96a8e4",
+      "source": "sudoers-nopasswd-wildcard",
+      "probe": "corpus",
+      "expected": "vulnerable",
+      "predicted": "clean",
+      "expected_cwes": [
+        "CWE-732"
+      ],
+      "predicted_cwes": [],
+      "status": "ok",
+      "notes": []
+    },
+    {
+      "id": "eb1299e77291",
+      "source": "systemd-root-nohardening",
+      "probe": "corpus",
+      "expected": "vulnerable",
+      "predicted": "clean",
+      "expected_cwes": [
+        "CWE-732"
+      ],
+      "predicted_cwes": [],
+      "status": "ok",
+      "notes": []
+    },
+    {
+      "id": "59b2998b9ddd",
+      "source": "udev-world-writable",
+      "probe": "corpus",
+      "expected": "vulnerable",
+      "predicted": "clean",
+      "expected_cwes": [
+        "CWE-732"
+      ],
+      "predicted_cwes": [],
+      "status": "ok",
+      "notes": []
+    },
+    {
+      "id": "9783e1abc3a0",
+      "source": "sysctl-weak",
+      "probe": "corpus",
+      "expected": "vulnerable",
+      "predicted": "clean",
+      "expected_cwes": [
+        "CWE-693"
+      ],
+      "predicted_cwes": [],
+      "status": "ok",
+      "notes": []
+    },
+    {
+      "id": "f9f86c95fb67",
+      "source": "sudoers-scoped-clean",
+      "probe": "corpus",
+      "expected": "clean",
+      "predicted": "clean",
+      "expected_cwes": [],
+      "predicted_cwes": [],
+      "status": "ok",
+      "notes": []
+    },
+    {
+      "id": "035d4cad8bc9",
+      "source": "systemd-hardened-clean",
+      "probe": "corpus",
+      "expected": "clean",
+      "predicted": "clean",
+      "expected_cwes": [],
+      "predicted_cwes": [],
+      "status": "ok",
+      "notes": []
+    },
+    {
+      "id": "b18bae75ce05",
+      "source": "js-eval-userinput",
+      "probe": "corpus",
+      "expected": "vulnerable",
+      "predicted": "clean",
+      "expected_cwes": [
+        "CWE-95"
+      ],
+      "predicted_cwes": [],
+      "status": "ok",
+      "notes": []
+    },
+    {
+      "id": "7e9e0faaaf06",
+      "source": "js-child-process-exec",
+      "probe": "corpus",
+      "expected": "vulnerable",
+      "predicted": "clean",
+      "expected_cwes": [
+        "CWE-78"
+      ],
+      "predicted_cwes": [],
+      "status": "ok",
+      "notes": []
+    },
+    {
+      "id": "488e21b88b3d",
+      "source": "js-innerhtml-xss",
+      "probe": "corpus",
+      "expected": "vulnerable",
+      "predicted": "clean",
+      "expected_cwes": [
+        "CWE-79"
+      ],
+      "predicted_cwes": [],
+      "status": "ok",
+      "notes": []
+    },
+    {
+      "id": "b418744980d4",
+      "source": "ts-execsync-path",
+      "probe": "corpus",
+      "expected": "vulnerable",
+      "predicted": "clean",
+      "expected_cwes": [
+        "CWE-78"
+      ],
+      "predicted_cwes": [],
+      "status": "ok",
+      "notes": []
+    },
+    {
+      "id": "5835c37acc9d",
+      "source": "js-textcontent-clean",
+      "probe": "corpus",
+      "expected": "clean",
+      "predicted": "clean",
+      "expected_cwes": [],
+      "predicted_cwes": [],
+      "status": "ok",
+      "notes": []
+    },
+    {
+      "id": "f971ff52f111",
+      "source": "ts-spawn-args-clean",
+      "probe": "corpus",
+      "expected": "clean",
+      "predicted": "clean",
+      "expected_cwes": [],
+      "predicted_cwes": [],
+      "status": "ok",
+      "notes": []
+    },
+    {
+      "id": "4d39e34e16dc",
+      "source": "php-sqli-concat",
+      "probe": "corpus",
+      "expected": "vulnerable",
+      "predicted": "clean",
+      "expected_cwes": [
+        "CWE-89"
+      ],
+      "predicted_cwes": [],
+      "status": "ok",
+      "notes": []
+    },
+    {
+      "id": "b45bdd4221f5",
+      "source": "php-unserialize-cookie",
+      "probe": "corpus",
+      "expected": "vulnerable",
+      "predicted": "clean",
+      "expected_cwes": [
+        "CWE-502"
+      ],
+      "predicted_cwes": [],
+      "status": "ok",
+      "notes": []
+    },
+    {
+      "id": "fc398ac5a8c8",
+      "source": "py-os-system",
+      "probe": "corpus",
+      "expected": "vulnerable",
+      "predicted": "clean",
+      "expected_cwes": [
+        "CWE-78"
+      ],
+      "predicted_cwes": [],
+      "status": "ok",
+      "notes": []
+    },
+    {
+      "id": "b3241cda50d7",
+      "source": "py-pickle-load",
+      "probe": "corpus",
+      "expected": "vulnerable",
+      "predicted": "clean",
+      "expected_cwes": [
+        "CWE-502"
+      ],
+      "predicted_cwes": [],
+      "status": "ok",
+      "notes": []
+    },
+    {
+      "id": "006ac8c183ea",
+      "source": "py-sql-fstring",
+      "probe": "corpus",
+      "expected": "vulnerable",
+      "predicted": "clean",
+      "expected_cwes": [
+        "CWE-89"
+      ],
+      "predicted_cwes": [],
+      "status": "ok",
+      "notes": []
+    },
+    {
+      "id": "07cf7c4d6afa",
+      "source": "py-yaml-load",
+      "probe": "corpus",
+      "expected": "vulnerable",
+      "predicted": "clean",
+      "expected_cwes": [
+        "CWE-502"
+      ],
+      "predicted_cwes": [],
+      "status": "ok",
+      "notes": []
+    },
+    {
+      "id": "2ee780356907",
+      "source": "py-parameterized-clean",
+      "probe": "corpus",
+      "expected": "clean",
+      "predicted": "clean",
+      "expected_cwes": [],
+      "predicted_cwes": [],
+      "status": "ok",
+      "notes": []
+    },
+    {
+      "id": "7aa0f5f8052f",
+      "source": "php-prepared-clean",
+      "probe": "corpus",
+      "expected": "clean",
+      "predicted": "clean",
+      "expected_cwes": [],
+      "predicted_cwes": [],
+      "status": "ok",
+      "notes": []
+    },
+    {
+      "id": "c1bc2cc1a1d8",
+      "source": "qml-eval-handler",
+      "probe": "corpus",
+      "expected": "vulnerable",
+      "predicted": "clean",
+      "expected_cwes": [
+        "CWE-95"
+      ],
+      "predicted_cwes": [],
+      "status": "ok",
+      "notes": []
+    },
+    {
+      "id": "c648ee7b86f2",
+      "source": "qml-clean",
+      "probe": "corpus",
+      "expected": "clean",
+      "predicted": "clean",
+      "expected_cwes": [],
+      "predicted_cwes": [],
+      "status": "ok",
+      "notes": []
+    },
+    {
+      "id": "c9fae0533832",
+      "source": "sh-curl-pipe-sh",
+      "probe": "corpus",
+      "expected": "vulnerable",
+      "predicted": "vulnerable",
+      "expected_cwes": [
+        "CWE-494",
+        "CWE-78"
+      ],
+      "predicted_cwes": [
+        "CWE-494"
+      ],
+      "status": "ok",
+      "notes": []
+    },
+    {
+      "id": "6e0892189b0c",
+      "source": "sh-eval-userinput",
+      "probe": "corpus",
+      "expected": "vulnerable",
+      "predicted": "vulnerable",
+      "expected_cwes": [
+        "CWE-95"
+      ],
+      "predicted_cwes": [
+        "CWE-95"
+      ],
+      "status": "ok",
+      "notes": []
+    },
+    {
+      "id": "cc0c5b43c4bc",
+      "source": "sh-rmrf-var",
+      "probe": "corpus",
+      "expected": "vulnerable",
+      "predicted": "vulnerable",
+      "expected_cwes": [
+        "CWE-78"
+      ],
+      "predicted_cwes": [
+        "CWE-78"
+      ],
+      "status": "ok",
+      "notes": []
+    },
+    {
+      "id": "ef3f7ef2fa22",
+      "source": "sh-tmp-race",
+      "probe": "corpus",
+      "expected": "vulnerable",
+      "predicted": "clean",
+      "expected_cwes": [
+        "CWE-377"
+      ],
+      "predicted_cwes": [],
+      "status": "ok",
+      "notes": []
+    },
+    {
+      "id": "51514af1540b",
+      "source": "sh-hardcoded-token",
+      "probe": "corpus",
+      "expected": "vulnerable",
+      "predicted": "clean",
+      "expected_cwes": [
+        "CWE-798"
+      ],
+      "predicted_cwes": [],
+      "status": "ok",
+      "notes": []
+    },
+    {
+      "id": "63e9a6490563",
+      "source": "sh-download-chmod-exec",
+      "probe": "corpus",
+      "expected": "vulnerable",
+      "predicted": "clean",
+      "expected_cwes": [
+        "CWE-494"
+      ],
+      "predicted_cwes": [],
+      "status": "ok",
+      "notes": []
+    },
+    {
+      "id": "0738915f2b0d",
+      "source": "sh-checked-download-clean",
+      "probe": "corpus",
+      "expected": "clean",
+      "predicted": "clean",
+      "expected_cwes": [],
+      "predicted_cwes": [],
+      "status": "ok",
+      "notes": []
+    },
+    {
+      "id": "7e6d26825901",
+      "source": "sh-quoted-clean",
+      "probe": "corpus",
+      "expected": "clean",
+      "predicted": "clean",
+      "expected_cwes": [],
+      "predicted_cwes": [],
+      "status": "ok",
+      "notes": []
+    }
+  ]
+}

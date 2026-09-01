@@ -81,6 +81,20 @@ uv run python -m vharness eval
 uv run python -m vharness eval --dataset ~/data/val.jsonl --skip-corpus
 ```
 
+### Local skills
+
+Runs may include local, read-only `SKILL.md` instructions. Each skill file
+must have frontmatter with `name` and `description`; repeat `--skill` to load
+more than one. Instructions are added to the model system prompt and their
+SHA-256 metadata is recorded in the JSONL run log.
+
+```bash
+uv run python -m vharness scan ~/my-repo --skill ./skills/security-review
+uv run python -m vharness list-skills ./skills
+```
+
+The harness does not execute scripts or read files bundled alongside a skill.
+
 ## Compose freely with `run`
 
 The presets are just compositions. `run` exposes the pipeline directly:

@@ -39,7 +39,7 @@ def setup(verbosity: int = 0, quiet: bool = False) -> None:
     if quiet:
         level = logging.CRITICAL
     else:
-        level = {0: logging.WARNING, 1: logging.INFO, 2: logging.DEBUG}.get(verbosity, logging.DEBUG)
+        level = {0: logging.INFO, 1: logging.DEBUG}.get(verbosity, logging.DEBUG)
     handler = logging.StreamHandler()
     handler.setFormatter(_CompactFormatter())
     _LOG.handlers.clear()
@@ -49,7 +49,7 @@ def setup(verbosity: int = 0, quiet: bool = False) -> None:
 
 def get(name: str) -> logging.Logger:
     """Child logger for a module (e.g. ``log.get(__name__)``)."""
-    return _LOG.getChild(name) if name.startswith("vharness") else _LOG
+    return logging.getLogger(name)
 
 
 log = _LOG
