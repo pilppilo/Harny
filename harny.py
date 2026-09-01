@@ -1,14 +1,23 @@
 #!/usr/bin/env python3
 """Backwards-compatible shim: harny.py --dir <src> --out report.sarif
 
-Delegates to the vharness CLI (`scan` preset).
+Delegates to the vharness CLI (`scan` preset). Works with the project venv
+(`uv run python harny.py …`) or a bare interpreter from a checkout
+(`python3 harny.py …` — dry-run needs no third-party packages).
 """
 
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
-from vharness.cli import main
+# Bootstrap the in-repo package when run with a bare interpreter (no venv
+# activated, vharness not pip-installed).
+_SRC = Path(__file__).resolve().parent / "src"
+if (_SRC / "vharness").is_dir():
+    sys.path.insert(0, str(_SRC))
+
+from vharness.cli import main  # noqa: E402
 
 if __name__ == "__main__":
     args = sys.argv[1:]

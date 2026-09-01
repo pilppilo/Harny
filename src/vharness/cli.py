@@ -50,11 +50,19 @@ def _make_generator(args) -> object:
         except ConfigError as e:
             print(f"error: {e}", file=sys.stderr)
             sys.exit(2)
+        try:
+            from .generators.openai_compat import OpenAICompatible
+        except ModuleNotFoundError:
+            print(
+                "error: the 'openai' package is not installed; "
+                "run `uv sync` or `pip install openai` (or use --generator mock offline)",
+                file=sys.stderr,
+            )
+            sys.exit(2)
         cache = None
         if not getattr(args, "no_cache", False):
             cache = getattr(args, "cache_file", None) or os.path.expanduser("~/.cache/vharness.sqlite3")
             os.makedirs(os.path.dirname(cache), exist_ok=True)
-        from .generators.openai_compat import OpenAICompatible
 
         return OpenAICompatible.from_config(
             cfg,
