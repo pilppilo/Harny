@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Backwards-compatible shim: harny.py --dir <src> --out report.sarif
 
-Delegates to the vharness package (`uv run python -m vharness scan ...`).
+Delegates to the vharness CLI (`scan` preset).
 """
 
 from __future__ import annotations
 
 import sys
 
-from vharness.__main__ import main
+from vharness.cli import main
 
 if __name__ == "__main__":
     args = sys.argv[1:]

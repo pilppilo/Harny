@@ -1,112 +1,155 @@
-# Harny — LLM vulnerability scanner + fine-tune eval harness
+# Harny (vharness) — a pluggable LLM security harness
 
-Extendable harness for security-tuned LLMs: scan code across domains
-(C/C++, web languages, shell, distro configs), export SARIF/Markdown reports,
-and **eval** a model against labeled samples to measure whether fine-tuning
-actually helps.
+An SDK-shaped harness for security work with LLMs: **probe → generator →
+detector → evaluator**. Point it at any OpenAI-compatible endpoint, scan code
+across domains, score models against labeled data, and extend every stage with
+one-file plugins — from installed packages, without touching this repo.
 
-Works with any OpenAI-compatible endpoint: Ollama, vLLM, llama.cpp, LM
-Studio, or any hosted provider that speaks the chat-completions API.
+Built for (but not limited to) fine-tuned security models: measure whether a
+fine-tune actually beats its base model, with a scanner that runs the same
+pipeline in production.
 
-## Setup
+## The pipeline
+
+| Stage | Role | Built-ins |
+|---|---|---|
+| **Probe** | finds units of work (code chunks, dataset samples) | `ccpp`, `web`, `shell`, `distroconf`, `corpus`, `chat-dataset` |
+| **Generator** | model I/O for any OpenAI-compatible endpoint | `openai` (retry + SQLite cache + usage stats), `mock` |
+| **Detector** | judges the reply, never silently swallows failures | `json-verdict` (fenced/prose-tolerant JSON parsing + schema validation) |
+| **Runner** | concurrency, per-attempt JSONL run log, dry-run | — |
+| **Evaluator** | reports & metrics | `sarif`, `markdown`, `json`, `metrics`, `summary` |
+
+Every attempt (prompt, generation, verdict, findings, ground truth, tokens,
+latency) lands in a JSONL run log — runs are auditable and replayable.
+
+## Quick start
 
 ```bash
-uv sync            # creates .venv with deps
-uv run pytest      # unit tests, no network needed
+uv sync                       # deps: just openai
+uv run pytest                 # 44 tests, offline
+
+# Offline demo of the full pipeline (mock generator, zero API calls):
+uv run python -m vharness scan ~/my-repo --generator mock
+uv run python -m vharness eval --generator mock
+
+# List every registered plugin:
+uv run python -m vharness list
 ```
 
-## Configuration
-
-Point it at any OpenAI-compatible server:
+## Real runs — any OpenAI-compatible endpoint
 
 ```bash
-export VHARNESS_BASE_URL="http://localhost:11434/v1"   # Ollama (vLLM: http://localhost:8000/v1)
-export VHARNESS_API_KEY="..."                          # only if your server requires one
-export VHARNESS_MODEL="your-model-name"
-```
+export VHARNESS_BASE_URL="http://localhost:11434/v1"   # Ollama; vLLM: :8000/v1; any hosted API
+export VHARNESS_API_KEY="..."                          # only if required
+export VHARNESS_MODEL="your-model"
 
-CLI flags `--base-url/--api-key/--model` override the env vars.
+# What would be queried — tune triage before paying for tokens:
+uv run python -m vharness scan ~/my-repo --dry-run
 
-## Scan
+# Scan → SARIF (GitHub code-scanning), Markdown, JSON reports:
+uv run python -m vharness scan ~/my-repo --format sarif,markdown --out report
 
-```bash
-# See what would be queried — zero API cost (tune triage before paying):
-uv run python -m vharness scan ~/my-distro --dry-run
+# Restrict to domains:
+uv run python -m vharness scan ~/my-repo --analyzers shell,distroconf
 
-# Full scan of a distro repo (shell + configs + UI):
-uv run python -m vharness scan ~/my-distro --format sarif,markdown --out report
-
-# Just the web/JS layer:
-uv run python -m vharness scan ~/my-distro/shell --analyzers web
-
-# A C/C++ project:
-uv run python -m vharness scan ~/myproject --analyzers ccpp
-
-# Old entry point still works:
-uv run python harny.py --dir ~/myproject --out report.sarif
-```
-
-Outputs: `report.sarif` (GitHub code-scanning compatible, with CWE rules and
-stable fingerprints), `report.md` (human-readable, grouped by file/severity —
-the "issues report" for the distro), `report.json`.
-
-Triage: files without strong sink patterns are skipped; chunks within a file
-are filtered again. Query failures are **never** silently treated as
-"no vulnerability" — they surface in the summary and the cache makes re-runs
-free.
-
-## Eval — does the fine-tune actually work?
-
-```bash
-# Built-in labeled corpus (~35 vulnerable + clean samples across all domains):
+# Score a model on the labeled corpus (P/R/F1, FP-rate on clean, CWE accuracy):
 uv run python -m vharness eval
 
-# Compare two endpoints (e.g. fine-tune vs its base model):
-uv run python -m vharness eval \
-  --base-url http://localhost:8000/v1 --model my-fine-tune \
-  --compare-base-url http://localhost:8000/v1 --compare-model base-model
-
-# Pull code samples out of a chat-format JSONL dataset (OpenAI "messages" format):
-uv run python -m vharness eval --from-dataset ~/data/val.jsonl --limit 100
+# Score on your own chat-format dataset (code in user turn, CWE labels in assistant turn):
+uv run python -m vharness eval --dataset ~/data/val.jsonl --skip-corpus
 ```
 
-Reports precision/recall/F1, false-positive rate on clean code, CWE-label
-accuracy, per-CWE recall, latency and token cost. Writes `eval_report.md` plus
-a per-sample detail JSON for error analysis. Dataset samples must have code in
-the user turn and vulnerability/CWE labels in the assistant turn — non-code
-Q&A records are skipped automatically.
+## Compose freely with `run`
 
-## Adding a domain analyzer (one file)
+The presets are just compositions. `run` exposes the pipeline directly:
 
-Create `src/vharness/analyzers/<name>.py`:
+```bash
+# one probe, one evaluator, custom concurrency:
+uv run python -m vharness run ~/my-repo --probes shell --evaluators markdown,summary --workers 8
+
+# corpus + dataset together, JSON verdicts with a full run log:
+uv run python -m vharness run --probes corpus,chat-dataset --dataset val.jsonl \
+    --evaluators metrics,json --log-file eval_log.jsonl
+```
+
+## Extending — third-party plugins
+
+Plugins register via the `vharness.plugins` entry-point group, so a pip /
+uv-installed package can add probes, generators, detectors, or evaluators
+without forking. Minimal plugin package:
+
+```toml
+# my_plugins/pyproject.toml
+[project.entry-points."vharness.plugins"]
+my_plugins = "my_plugins"
+```
 
 ```python
-import re
-from .base import Analyzer, Chunk, register
-
-@register
-class RustAnalyzer(Analyzer):
-    name = "rust"
-    extensions = (".rs",)
-    strong_sinks = re.compile(r"unsafe\b|transmute|Command::new")
-    system_prompt = Analyzer.build_system_prompt("Analyze this Rust code for …")
-
-    def chunk(self, content: str, path: str = "") -> list[Chunk]:
-        return [Chunk(name="file_scope", line=1, code=content)]
+# my_plugins/__init__.py — import modules; their decorators register
+from . import rust  # noqa: F401
 ```
 
-Import it in `src/vharness/analyzers/__init__.py` — the registry picks it up
-everywhere (scan dispatch, `--analyzers`, eval language mapping).
+```python
+# my_plugins/rust.py
+from vharness.probes.base import Probe, register_builtin
+
+@register_builtin
+class RustProbe(Probe):
+    name = "rust"
+    help = "unsafe Rust review"
+    # FileProbe-style: extensions, strong_sinks, sinks, role, chunk()…
+```
+
+`vharness list` will then show `rust`. The same hook accepts generators
+(implement `.generate(system, prompt) -> Generation`), detectors
+(`.detect(attempt)`), and evaluators (`.evaluate(attempts, run_info)`).
+
+**In-repo** domains are one file too: drop a module under
+`src/vharness/probes/` following `domains.py`, import it in
+`probes/__init__.py`.
+
+## Optional: Inspect AI integration
+
+With `pip install vharness[inspect]` (or `uv sync --extra inspect`), corpus
+and dataset probes are exposed as [Inspect AI](https://inspect.aisi.org.uk)
+tasks — you get Inspect's metrics, log viewer, and `eval_set` A/B machinery:
+
+```python
+from inspect_ai import eval
+from vharness.inspect_adapter import corpus_task
+eval(corpus_task(), model="openai/your-model")
+```
+
+## Design notes
+
+- **No silent false negatives** — parse failures and API errors are statuses
+  on the attempt (`ok`/`parse_error`/`api_error`), visible in every summary.
+- **Cache-first** — SQLite response cache keyed by model+prompt; re-runs are
+  free, `--no-cache` bypasses.
+- **Dry-run everything** — `--dry-run` runs probes (discovery, triage,
+  chunking) with zero model calls and no endpoint configured.
+- **Untrusted input** — all code prompts carry an injection guard: analyzed
+  content is data, never instructions; suggested patches are advisory.
 
 ## Layout
 
 ```
 src/vharness/
-  analyzers/   ccpp · web (js/ts/php/py/qml) · shell · distroconf (+ base/registry)
-  scanner.py   discovery, triage, concurrency, dry-run, run stats
-  llm.py       retries, truncation handling, JSON validation, SQLite cache
-  eval.py      labeled-corpus + chat-dataset loaders, metrics, A/B compare
-  sarif.py report.py   SARIF / Markdown / JSON outputs
-  eval_corpus/ ~35 hand-labeled samples (vulnerable + clean) per domain
-tests/         unit tests (chunkers, parsing, SARIF, metrics, registry)
+  core.py            Attempt/Generation/Finding + registries + entry-point loading
+  runner.py          orchestration, concurrency, JSONL run log
+  cli.py             run/scan/eval/list
+  probes/            base + FileProbe, domain probes, corpus & chat-dataset
+  generators/        openai-compatible (retry/cache/stats), mock
+  detectors/         json-verdict
+  evaluators/        sarif, markdown, json, metrics, summary
+  analyzers/         per-language chunkers & sink triage (used by probes)
+  textutil.py        fence-stripping, balanced-JSON extraction, string masks
+  sarif.py           SARIF 2.1.0 builder (CWE rules, fingerprints)
+  inspect_adapter.py optional Inspect AI bridge
+  eval_corpus/       ~35 hand-labeled samples (vulnerable + clean, all domains)
+tests/               44 tests: pipeline, registry, chunkers, parsing, SARIF, metrics
 ```
+
+The scanner grew out of a single-file SAST harness; the analyzers that chunk
+C/C++, web languages, shell, and distro configs are still there — now driving
+probes instead of being the whole app.
