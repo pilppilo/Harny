@@ -46,10 +46,15 @@ def _make_generator(args) -> object:
         return Mock(script=script)
     if name == "openai":
         try:
-            cfg = resolve_endpoint(args.base_url, args.api_key, args.model)
+            cfg, src = resolve_endpoint(
+                args.base_url, args.api_key, args.model,
+                profile=getattr(args, "profile", None),
+                config_file=getattr(args, "config_file", None),
+            )
         except ConfigError as e:
             print(f"error: {e}", file=sys.stderr)
             sys.exit(2)
+        print(f"[*] endpoint: {cfg.describe()}  (from {src})")
         try:
             from .generators.openai_compat import OpenAICompatible
         except ModuleNotFoundError:
@@ -202,9 +207,12 @@ def cmd_list(args) -> int:
 def _generator_args(p: argparse.ArgumentParser, include_model: bool = True) -> None:
     p.add_argument("--generator", default="openai", help="openai | mock | any registered generator")
     if include_model:
-        p.add_argument("--base-url", help="OpenAI-compatible endpoint (env VHARNESS_BASE_URL)")
-        p.add_argument("--api-key", help="API key (env VHARNESS_API_KEY / OPENAI_API_KEY)")
-        p.add_argument("--model", help="model name (env VHARNESS_MODEL)")
+        p.add_argument("--base-url", help="OpenAI-compatible endpoint (env VHARNESS_BASE_URL, config profile)")
+        p.add_argument("--api-key", help="API key (env VHARNESS_API_KEY / OPENAI_API_KEY, config profile)")
+        p.add_argument("--model", help="model name (env VHARNESS_MODEL, config profile)")
+        p.add_argument("--profile", default=None, help="named section in the config file (e.g. ollama, openrouter)")
+        p.add_argument("--config", dest="config_file", default=None,
+                       help="config file path (default: $VHARNESS_CONFIG, ~/.config/vharness/config.toml, ./vharness.toml)")
     p.add_argument("--timeout", type=float, default=120.0)
     p.add_argument("--max-retries", type=int, default=3)
     p.add_argument("--max-tokens", type=int, default=1024)

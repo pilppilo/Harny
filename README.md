@@ -26,7 +26,7 @@ latency) lands in a JSONL run log — runs are auditable and replayable.
 
 ```bash
 uv sync                       # deps: just openai
-uv run pytest                 # 44 tests, offline
+uv run pytest                 # 53 tests, offline
 
 # Offline demo of the full pipeline (mock generator, zero API calls):
 uv run python -m vharness scan ~/my-repo --generator mock
@@ -38,10 +38,32 @@ uv run python -m vharness list
 
 ## Real runs — any OpenAI-compatible endpoint
 
+Settings resolve as **CLI flags → env vars → config file** (per field; the
+first source that sets a value wins).
+
+**Config file** — TOML with named profiles:
+
+```toml
+# ~/.config/vharness/config.toml  (or ./vharness.toml project-local, or $VHARNESS_CONFIG)
+[default]                       # used when no --profile is given
+base_url = "http://localhost:11434/v1"   # Ollama; vLLM: http://localhost:8000/v1
+model = "qwen2.5-coder:7b"
+
+[openrouter]                    # selected with: --profile openrouter
+base_url = "https://openrouter.ai/api/v1"
+api_key = "sk-or-v1-..."        # keep secrets in the user-level file (chmod 600)
+model = "mistralai/mistral-small"
+```
+
 ```bash
-export VHARNESS_BASE_URL="http://localhost:11434/v1"   # Ollama; vLLM: :8000/v1; any hosted API
-export VHARNESS_API_KEY="..."                          # only if required
-export VHARNESS_MODEL="your-model"
+# use [default]:
+uv run python -m vharness scan ~/my-repo
+
+# use a named profile:
+uv run python -m vharness scan ~/my-repo --profile openrouter
+
+# or inline, no config file:
+export VHARNESS_BASE_URL="http://localhost:11434/v1" VHARNESS_MODEL="qwen2.5-coder:7b"
 
 # What would be queried — tune triage before paying for tokens:
 uv run python -m vharness scan ~/my-repo --dry-run
@@ -147,7 +169,7 @@ src/vharness/
   sarif.py           SARIF 2.1.0 builder (CWE rules, fingerprints)
   inspect_adapter.py optional Inspect AI bridge
   eval_corpus/       ~35 hand-labeled samples (vulnerable + clean, all domains)
-tests/               44 tests: pipeline, registry, chunkers, parsing, SARIF, metrics
+tests/               53 tests: pipeline, registry, chunkers, parsing, SARIF, metrics, config
 ```
 
 The scanner grew out of a single-file SAST harness; the analyzers that chunk
