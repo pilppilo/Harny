@@ -5,6 +5,8 @@ from __future__ import annotations
 from ..core import Attempt, EVALUATOR_REGISTRY
 
 
+
+__all__ = ['Evaluator', 'register_builtin']
 class Evaluator:
     """Consumes a completed run's Attempts to produce an artifact.
 

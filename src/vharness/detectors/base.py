@@ -5,6 +5,8 @@ from __future__ import annotations
 from ..core import Attempt, DETECTOR_REGISTRY
 
 
+
+__all__ = ['Detector', 'register_builtin']
 class Detector:
     """Judges an Attempt's Generation.
 

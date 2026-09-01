@@ -1,6 +1,8 @@
+"""SARIF output tests (ported to core.Finding)."""
+
 import json
 
-from vharness.findings import Finding
+from vharness.core import Finding
 from vharness.sarif import build_sarif
 
 
@@ -38,3 +40,10 @@ def test_sarif_helpuri_points_at_mitre():
     sarif = build_sarif([_finding()])
     rule = sarif["runs"][0]["tool"]["driver"]["rules"][0]
     assert rule["helpUri"].endswith("/78.html")
+
+
+def test_tool_version_tracks_package():
+    from vharness.core import VERSION
+    from vharness.sarif import TOOL_VERSION
+
+    assert TOOL_VERSION == VERSION

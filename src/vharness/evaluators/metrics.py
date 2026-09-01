@@ -8,6 +8,7 @@ from collections import Counter
 from dataclasses import asdict, dataclass
 
 from ..core import Attempt
+from ..log import log
 from .base import Evaluator, register_builtin
 
 
@@ -90,20 +91,21 @@ class MetricsReport(Evaluator):
 
     def evaluate(self, attempts: list[Attempt], run_info: dict) -> None:
         m = compute(attempts)
-        print("\n== metrics ==")
+        log.info("== metrics ==")
         if not m["labeled"]:
-            print("no labeled attempts — run a dataset probe (corpus/chat-dataset) to score the model")
-            return
-        print(
-            f"labeled={m['labeled']}  P={m['precision']} R={m['recall']} F1={m['f1']}  "
-            f"(TP={m['tp']} FP={m['fp']} TN={m['tn']} FN={m['fn']})"
-        )
-        if m["clean_total"]:
-            print(f"false-positive rate on clean code: {m['fp_rate_clean']}")
-        if m["cwe_labeled"]:
-            print(f"CWE-label accuracy: {m['cwe_accuracy']} ({m['cwe_match']}/{m['cwe_labeled']})")
-        if m["per_cwe_recall"]:
-            print("per-CWE recall: " + ", ".join(f"{k}={v}" for k, v in m["per_cwe_recall"].items()))
+            log.info("no labeled attempts — run a dataset probe (corpus/chat-dataset) to score the model")
+        else:
+            log.info(
+                "labeled=%s  P=%s R=%s F1=%s  (TP=%s FP=%s TN=%s FN=%s)",
+                m["labeled"], m["precision"], m["recall"], m["f1"],
+                m["tp"], m["fp"], m["tn"], m["fn"],
+            )
+            if m["clean_total"]:
+                log.info("false-positive rate on clean code: %s", m["fp_rate_clean"])
+            if m["cwe_labeled"]:
+                log.info("CWE-label accuracy: %s (%s/%s)", m["cwe_accuracy"], m["cwe_match"], m["cwe_labeled"])
+            if m["per_cwe_recall"]:
+                log.info("per-CWE recall: %s", ", ".join(f"{k}={v}" for k, v in m["per_cwe_recall"].items()))
         out = run_info.get("metrics_out") or "eval_metrics.json"
         if run_info.get("out_dir") and not os.path.isabs(out):
             out = os.path.join(run_info["out_dir"], out)
@@ -118,4 +120,4 @@ class MetricsReport(Evaluator):
                 }
                 for a in attempts if a.expected_verdict is not None
             ]}, fh, indent=2)
-        print(f"[+] metrics: {out}")
+        log.info("wrote metrics: %s", out)

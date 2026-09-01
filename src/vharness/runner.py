@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 import os
 import threading
@@ -18,6 +19,7 @@ from .core import (
     load_entry_points,
 )
 from .generators.base import Generator
+from .log import log
 
 # Built-ins register when the stage packages are imported.
 from . import detectors  # noqa: F401,E402
@@ -54,12 +56,14 @@ class Runner:
         detectors: list[str] | None = None,
         workers: int = 4,
         log_file: str | None = None,
+        log_raw: bool = False,
     ) -> None:
         load_entry_points()  # third-party plugins, idempotent
         self.generator = generator
         self.detector_names = detectors or ["json-verdict"]
         self.workers = workers
         self.log_file = log_file
+        self.log_raw = log_raw
         self._log_lock = threading.Lock()
         if log_file:
             os.makedirs(os.path.dirname(os.path.abspath(log_file)), exist_ok=True)
@@ -94,9 +98,14 @@ class Runner:
             started_at=time.time(),
             attempts_total=len(attempts),
         )
-
+        self._log_event({"type": "run_start", "run_id": info.run_id, "ts": time.time(),
+                         "probes": info.probes, "targets": info.targets,
+                         "attempts": len(attempts), "dry_run": dry_run,
+                         "detectors": info.detectors})
         if dry_run:
             info.wall_seconds = time.time() - info.started_at
+            self._log_event({"type": "run_end", "run_id": info.run_id, "ts": time.time(),
+                             "status": "dry_run", "attempts": len(attempts)})
             return attempts, info
 
         # Real run — the generator gets constructed here (first .generate call).
@@ -105,18 +114,34 @@ class Runner:
         detectors = [DETECTOR_REGISTRY.instantiate(n) for n in self.detector_names]
 
         def work(attempt: Attempt) -> Attempt:
-            gen = self.generator.generate(attempt.system, attempt.prompt)
-            attempt.record(gen)
-            for d in detectors:
-                d.detect(attempt)
+            try:
+                gen = self.generator.generate(attempt.system, attempt.prompt)
+                attempt.record(gen)
+                for d in detectors:
+                    d.detect(attempt)
+            except Exception as e:  # noqa: BLE001 — a detector/generator bug must not kill the run
+                log.exception("internal error on attempt %s (%s)", attempt.source, attempt.id)
+                attempt.status = "internal_error"
+                attempt.verdict = "error"
+                attempt.detector_notes.append(f"internal error: {e}")
             self._log(attempt, info)
             return attempt
 
         done: list[Attempt] = []
+        total = len(attempts)
         with ThreadPoolExecutor(max_workers=max(1, self.workers)) as pool:
             futures = [pool.submit(work, a) for a in attempts]
-            for fut in as_completed(futures):
-                done.append(fut.result())
+            for i, fut in enumerate(as_completed(futures), 1):
+                try:
+                    a = fut.result()
+                except Exception:  # noqa: BLE001 — belt & braces around work()
+                    log.exception("worker future failed (%d/%d)", i, total)
+                    continue
+                done.append(a)
+                if a.status == "ok":
+                    log.info("[%d/%d] %s → %s (%d findings)", i, total, a.source, a.verdict, len(a.findings))
+                else:
+                    log.info("[%d/%d] %s → %s (%s)", i, total, a.source, a.verdict or "?", a.status)
 
         for a in done:
             info.ok += a.status == "ok"
@@ -125,6 +150,11 @@ class Runner:
             info.skipped += a.status == "skipped"
             info.findings += len(a.findings)
         info.wall_seconds = time.time() - info.started_at
+        self._log_event({"type": "run_end", "run_id": info.run_id, "ts": time.time(),
+                         "status": "complete", "attempts": info.attempts_total,
+                         "ok": info.ok, "parse_errors": info.parse_errors,
+                         "api_errors": info.api_errors, "internal_errors": len(done) - info.ok - info.parse_errors - info.api_errors - info.skipped,
+                         "findings": info.findings, "wall_seconds": info.wall_seconds})
         return done, info
 
     def evaluate(self, attempts: list[Attempt], run_info: dict, evaluator_names: list[str]) -> None:
@@ -134,10 +164,18 @@ class Runner:
             ev.evaluate(attempts, run_info)
 
     # ---- logging ---------------------------------------------------------
+    def _log_event(self, record: dict) -> None:
+        if not self.log_file:
+            return
+        with self._log_lock:
+            with open(self.log_file, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(record, default=str) + "\n")
+
     def _log(self, attempt: Attempt, info: RunInfo) -> None:
         if not self.log_file:
             return
         rec = {
+            "type": "attempt",
             "run_id": info.run_id,
             "ts": time.time(),
             "probe": attempt.probe,
@@ -151,6 +189,9 @@ class Runner:
             "expected_verdict": attempt.expected_verdict,
             "expected_cwes": [f.cwe for f in (attempt.expected_findings or [])],
             "prompt_chars": len(attempt.prompt),
+            "prompt_sha256": hashlib.sha256(
+                (attempt.system + "\x00" + attempt.prompt).encode("utf-8", "replace")
+            ).hexdigest(),
             "generation": attempt.generation and {
                 "model": attempt.generation.model,
                 "finish_reason": attempt.generation.finish_reason,
@@ -161,6 +202,11 @@ class Runner:
                 "completion_tokens": attempt.generation.completion_tokens,
             },
         }
+        if self.log_raw:
+            rec["prompt"] = attempt.prompt
+            rec["system_prompt"] = attempt.system
+            if attempt.generation is not None:
+                rec["generation_text"] = attempt.generation.text
         line = json.dumps(rec, default=str)
         with self._log_lock:
             with open(self.log_file, "a", encoding="utf-8") as fh:

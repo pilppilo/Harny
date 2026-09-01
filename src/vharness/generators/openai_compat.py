@@ -45,6 +45,7 @@ class OpenAICompatible(Generator):
         cache_path: str | None = None,
     ) -> None:
         self.model = model
+        self.base_url = base_url
         self.max_retries = max_retries
         self.max_tokens = max_tokens
         self.temperature = temperature
@@ -75,7 +76,7 @@ class OpenAICompatible(Generator):
 
     def _cache_key(self, system: str, prompt: str) -> str:
         h = hashlib.sha256()
-        for part in (self.model, system, prompt):
+        for part in (self.base_url, self.model, system, prompt):
             h.update(part.encode("utf-8", "replace"))
             h.update(b"\x00")
         return h.hexdigest()

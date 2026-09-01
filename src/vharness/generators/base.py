@@ -5,6 +5,8 @@ from __future__ import annotations
 from ..core import GENERATOR_REGISTRY, Generation
 
 
+
+__all__ = ['Generator', 'register_builtin']
 class Generator:
     """Turns a prompt (+ system prompt) into a Generation.
 

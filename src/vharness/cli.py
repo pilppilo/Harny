@@ -3,9 +3,8 @@
 Two levels:
   * ``vharness run``     — compose any probes × generator × detectors × evaluators
   * ``vharness scan`` / ``vharness eval`` — opinionated presets over `run`
-
-Plus ``vharness list`` to enumerate plugins and ``vharness replay`` to re-run
-from a previous JSONL log.
+  * ``vharness replay``  — re-run detectors on a previous JSONL run log
+Plus ``vharness list`` to enumerate registered plugins.
 """
 
 from __future__ import annotations
@@ -23,17 +22,18 @@ from .core import (
     GENERATOR_REGISTRY,
     PROBE_REGISTRY,
 )
+from .log import log, setup as log_setup
 from .runner import Runner
 
 #: Probes used by the ``scan`` preset (filesystem code scanning).
 SCAN_PROBES = ["ccpp", "web", "shell", "distroconf"]
-#: Probes used by the ``eval`` preset (labeled datasets).
-EVAL_PROBES = ["corpus", "chat-dataset"]
-#: Evaluators used when none are named explicitly.
-DEFAULT_EVALUATORS = ["summary"]
 
 
-def _make_generator(args) -> object:
+class CLIError(RuntimeError):
+    """User-facing CLI failure; main() prints it and exits 2."""
+
+
+def _make_generator(args):
     name = getattr(args, "generator", None) or "openai"
     if name == "mock":
         from .generators.mock import Mock
@@ -52,23 +52,19 @@ def _make_generator(args) -> object:
                 config_file=getattr(args, "config_file", None),
             )
         except ConfigError as e:
-            print(f"error: {e}", file=sys.stderr)
-            sys.exit(2)
-        print(f"[*] endpoint: {cfg.describe()}  (from {src})")
+            raise CLIError(str(e)) from e
         try:
             from .generators.openai_compat import OpenAICompatible
         except ModuleNotFoundError:
-            print(
-                "error: the 'openai' package is not installed; "
-                "run `uv sync` or `pip install openai` (or use --generator mock offline)",
-                file=sys.stderr,
-            )
-            sys.exit(2)
+            raise CLIError(
+                "the 'openai' package is not installed; "
+                "run `uv sync` or `pip install openai` (or use --generator mock offline)"
+            ) from None
+        log.info("endpoint: %s  (from %s)", cfg.describe(), src)
         cache = None
         if not getattr(args, "no_cache", False):
             cache = getattr(args, "cache_file", None) or os.path.expanduser("~/.cache/vharness.sqlite3")
             os.makedirs(os.path.dirname(cache), exist_ok=True)
-
         return OpenAICompatible.from_config(
             cfg,
             timeout=args.timeout,
@@ -79,8 +75,7 @@ def _make_generator(args) -> object:
     try:
         return GENERATOR_REGISTRY.instantiate(name)
     except KeyError as e:
-        print(f"error: {e}", file=sys.stderr)
-        sys.exit(2)
+        raise CLIError(str(e)) from e
 
 
 class _LazyGenerator:
@@ -106,7 +101,13 @@ def _runner(args) -> Runner:
     generator = _LazyGenerator(args)
     detectors = getattr(args, "detectors", None) or ["json-verdict"]
     log_file = None if getattr(args, "no_log", False) else getattr(args, "log_file", None)
-    return Runner(generator, detectors=detectors, workers=args.workers, log_file=log_file)
+    return Runner(
+        generator,
+        detectors=detectors,
+        workers=args.workers,
+        log_file=log_file,
+        log_raw=getattr(args, "log_raw", False),
+    )
 
 
 def _probe_kwargs(args, probe_names: list[str]) -> dict:
@@ -132,13 +133,12 @@ def cmd_run(args) -> int:
         try:
             PROBE_REGISTRY.get(p)
         except KeyError as e:
-            print(f"error: {e}", file=sys.stderr)
-            return 2
+            raise CLIError(str(e)) from e
     runner = _runner(args)
     probe_kwargs = _probe_kwargs(args, probe_names)
 
     evaluators = [e.strip() for e in (args.evaluators or "").split(",") if e.strip()]
-    evaluator_names = evaluators or DEFAULT_EVALUATORS
+    evaluator_names = evaluators or ["summary"]
     run_info_extra = {
         "out": getattr(args, "out", None),
         "sarif_out": getattr(args, "sarif_out", None),
@@ -157,15 +157,18 @@ def cmd_run(args) -> int:
         dry_run=getattr(args, "dry_run", False),
     )
     if getattr(args, "dry_run", False):
-        print(f"[DRY RUN] {len(attempts)} attempt(s) would be generated across probes: {probe_names}")
+        log.info("DRY RUN: %d attempt(s) would be generated across probes: %s", len(attempts), probe_names)
         for a in attempts[:50]:
-            print(f"  would query {a.source}:{a.context.get('line', '')} ({a.probe})")
+            log.info("  would query %s:%s (%s)", a.source, a.context.get("line", ""), a.probe)
         if len(attempts) > 50:
-            print(f"  … and {len(attempts) - 50} more")
+            log.info("  … and %d more", len(attempts) - 50)
         return 0
 
     run_info = vars(info) | run_info_extra | {"run_info": info}
     runner.evaluate(attempts, run_info, evaluator_names)
+    if getattr(args, "fail_on_findings", False) and any(a.findings for a in attempts):
+        log.info("fail-on-findings: %d finding(s) present — exiting 1", sum(len(a.findings) for a in attempts))
+        return 1
     return 0
 
 
@@ -204,6 +207,116 @@ def cmd_list(args) -> int:
     return 0
 
 
+def cmd_replay(args) -> int:
+    """Re-apply detectors to a previous run log — no model calls.
+
+    Attempts are reconstructed from `type: attempt` records (raw text needed
+    for re-detection: requires a log written with --log-raw). Attempts whose
+    log record lacks `generation_text` are reported as skipped.
+    """
+    from .core import Attempt, Finding, Generation
+    from vharness.detectors.json_verdict import JSONVerdict
+
+    attempts: list[Attempt] = []
+    skipped = 0
+    with open(args.log_path, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if rec.get("type") != "attempt":
+                continue
+            if args.run_id and rec.get("run_id") != args.run_id:
+                continue
+            if not rec.get("generation_text") and not rec.get("generation", {}).get("error"):
+                skipped += 1
+                continue
+            a = Attempt(
+                prompt=rec.get("prompt", ""),
+                system=rec.get("system_prompt", ""),
+                probe=rec.get("probe", ""),
+                source=rec.get("source", ""),
+                context=rec.get("context", {}),
+                status="pending",
+            )
+            a.id = rec.get("id", a.id)
+            a.record(Generation(
+                text=rec.get("generation_text", ""),
+                model=rec.get("generation", {}).get("model", ""),
+                finish_reason=rec.get("generation", {}).get("finish_reason", ""),
+                error=rec.get("generation", {}).get("error"),
+            ))
+            if rec.get("expected_verdict"):
+                a.expected_verdict = rec["expected_verdict"]
+                a.expected_findings = [
+                    Finding(cwe=c, severity="High", sink="", explanation="expected")
+                    for c in rec.get("expected_cwes", [])
+                ]
+            attempts.append(a)
+
+    if skipped:
+        log.warning("%s attempt(s) skipped: no generation_text in log (write with --log-raw)", skipped)
+    if not attempts:
+        raise CLIError(f"no replayable attempts found in {args.log_path}")
+
+    detector = JSONVerdict()
+    for a in attempts:
+        detector.detect(a)
+
+    info = {"run_id": args.run_id or "replay", "probes": ["replay"], "generator": "replay",
+            "dry_run": False, "attempts_total": len(attempts)}
+    ok = sum(a.status == "ok" for a in attempts)
+    parse_errors = sum(a.status == "parse_error" for a in attempts)
+    api_errors = sum(a.status == "api_error" for a in attempts)
+    findings = sum(len(a.findings) for a in attempts)
+
+    class _Info:  # minimal RunInfo-shaped object for evaluators
+        def __init__(self):
+            self.run_id = args.run_id or "replay"
+            self.probes = ["replay"]
+            self.generator = "replay"
+            self.model = "replay"
+            self.attempts_total = len(attempts)
+            self.ok = ok
+            self.parse_errors = parse_errors
+            self.api_errors = api_errors
+            self.skipped = skipped
+            self.findings = findings
+            self.wall_seconds = 0.0
+            self.dry_run = False
+
+    run_info = {
+        "run_info": _Info(),
+        "out": args.out,
+        "sarif_out": getattr(args, "sarif_out", None),
+        "markdown_out": getattr(args, "markdown_out", None),
+        "json_out": getattr(args, "json_out", None),
+        "metrics_out": getattr(args, "metrics_out", None),
+    }
+    log.info("replayed %d attempt(s): ok=%d parse_errors=%d api_errors=%d findings=%d (skipped=%d)",
+             len(attempts), ok, parse_errors, api_errors, findings, skipped)
+    evaluator_names = [e.strip() for e in (args.evaluators or "metrics,summary").split(",") if e.strip()]
+    runner = Runner(_NeverGenerate(), log_file=None)
+    runner.evaluate(attempts, run_info, evaluator_names)
+    if getattr(args, "fail_on_findings", False) and any(a.findings for a in attempts):
+        return 1
+    return 0
+
+
+class _NeverGenerate:
+    """Placeholder generator: replay never generates."""
+
+    name = "replay"
+    model = "replay"
+
+    def generate(self, system: str, prompt: str):  # pragma: no cover
+        raise RuntimeError("replay must not generate")
+
+
 def _generator_args(p: argparse.ArgumentParser, include_model: bool = True) -> None:
     p.add_argument("--generator", default="openai", help="openai | mock | any registered generator")
     if include_model:
@@ -219,10 +332,16 @@ def _generator_args(p: argparse.ArgumentParser, include_model: bool = True) -> N
     p.add_argument("--workers", type=int, default=4)
     p.add_argument("--no-cache", action="store_true")
     p.add_argument("--cache-file", default=None)
-    p.add_argument("--log-file", default=None, help="JSONL run log (default: scan_log.jsonl for run, off for list)")
+    p.add_argument("--log-file", default=None, help="JSONL run log path")
+    p.add_argument("--log-raw", action="store_true", help="include prompts and raw model text in the JSONL log")
     p.add_argument("--no-log", action="store_true")
     p.add_argument("--mock-script", action="append", default=[], metavar="KEY=REPLY",
                    help="mock generator: exact-substring key → canned reply (repeatable)")
+    p.add_argument("--fail-on-findings", action="store_true",
+                   help="exit 1 if any findings were produced (for CI)")
+    p.add_argument("-v", "--verbose", action="count", default=0,
+                   help="verbosity: -v shows operational/progress, -vv debug (repeatable)")
+    p.add_argument("-q", "--quiet", action="store_true", help="suppress log output (errors still exit non-zero)")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -254,7 +373,7 @@ def build_parser() -> argparse.ArgumentParser:
     scan_p.add_argument("--format", default="sarif,markdown", help="comma list: sarif,markdown,json,summary")
     scan_p.add_argument("--out", default="report")
     scan_p.add_argument("--dry-run", action="store_true")
-    scan_p.add_argument("--exclude", action="append", default=[])
+    scan_p.add_argument("--exclude", action="append", default=[], help="dir name to skip (repeatable)")
     _generator_args(scan_p)
     scan_p.set_defaults(func=cmd_scan, log_file="scan_log.jsonl")
 
@@ -265,7 +384,19 @@ def build_parser() -> argparse.ArgumentParser:
     eval_p.add_argument("--skip-corpus", action="store_true")
     eval_p.add_argument("--metrics-out", default="eval_metrics.json")
     _generator_args(eval_p)
-    eval_p.set_defaults(func=cmd_eval)
+    eval_p.set_defaults(func=cmd_eval, log_file="eval_log.jsonl")
+
+    replay_p = sub.add_parser("replay", help="re-run detectors on a previous JSONL run log (no model calls)")
+    replay_p.add_argument("log_path", help="JSONL run log (must have been written with --log-raw to re-detect)")
+    replay_p.add_argument("--run-id", default=None, help="only replay attempts from this run")
+    replay_p.add_argument("--evaluators", default="metrics,summary")
+    replay_p.add_argument("--out", default="replay_report")
+    replay_p.add_argument("--sarif-out", default=None)
+    replay_p.add_argument("--markdown-out", default=None)
+    replay_p.add_argument("--json-out", default=None)
+    replay_p.add_argument("--metrics-out", default=None)
+    _generator_args(replay_p, include_model=False)
+    replay_p.set_defaults(func=cmd_replay)
 
     list_p = sub.add_parser("list", help="list registered plugins")
     list_p.set_defaults(func=cmd_list)
@@ -275,4 +406,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    return args.func(args)
+    log_setup(getattr(args, "verbose", 0), getattr(args, "quiet", False))
+    try:
+        return args.func(args)
+    except CLIError as e:
+        log.error("%s", e)
+        return 2
+    except ConfigError as e:
+        log.error("%s", e)
+        return 2

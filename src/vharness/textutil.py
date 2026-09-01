@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import re
 
-_FENCE_RE = re.compile(r"^```[a-zA-Z0-9_-]*\s*|\s*```$")
-
 
 def strip_code_fences(text: str) -> str:
     """Strip leading/trailing markdown code fences from all lines."""

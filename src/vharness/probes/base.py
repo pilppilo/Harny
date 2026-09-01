@@ -5,6 +5,8 @@ from __future__ import annotations
 from ..core import Attempt, PROBE_REGISTRY
 
 
+
+__all__ = ['Probe', 'register_builtin']
 class Probe:
     """A source of Attempts.
 

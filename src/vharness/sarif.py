@@ -5,11 +5,11 @@ from __future__ import annotations
 import hashlib
 import json
 
-from .findings import Finding
+from .core import VERSION, Finding
 
 SCHEMA_URI = "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json"
 TOOL_NAME = "vharness"
-TOOL_VERSION = "0.1.0"
+TOOL_VERSION = VERSION
 
 
 def _fingerprint(f: Finding) -> str:

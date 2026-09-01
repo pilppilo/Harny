@@ -1,0 +1,2 @@
+{"type": "run_start", "run_id": "1c3842cb1948", "ts": 1788265456.0624387, "probes": ["ccpp", "web", "shell", "distroconf"], "targets": ["/home/flub/omarchy"], "attempts": 627, "dry_run": true, "detectors": ["json-verdict"]}
+{"type": "run_end", "run_id": "1c3842cb1948", "ts": 1788265456.062684, "status": "dry_run", "attempts": 627}

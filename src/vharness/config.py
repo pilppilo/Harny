@@ -39,6 +39,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from .log import log
+
 if sys.version_info >= (3, 11):
     import tomllib
 else:  # py3.10
@@ -82,7 +84,7 @@ def _load_toml(path: str | Path) -> dict:
     except OSError:
         return {}
     except Exception as e:  # malformed TOML — visible, not fatal
-        print(f"[!] ignoring unreadable config {path}: {e}", file=sys.stderr)
+        log.warning("ignoring unreadable config %s: %s", path, e)
         return {}
 
 

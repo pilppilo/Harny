@@ -7,6 +7,7 @@ import json
 import os
 
 from ..core import Attempt
+from ..log import log
 from ..sarif import build_sarif
 from .base import Evaluator, register_builtin
 
@@ -38,7 +39,7 @@ class SarifReport(Evaluator):
         sarif = build_sarif(list(_all_findings(attempts)))
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(sarif, fh, indent=2)
-        print(f"[+] SARIF: {path}")
+        log.info("wrote SARIF: %s", path)
 
 
 @register_builtin
@@ -75,7 +76,7 @@ class MarkdownReport(Evaluator):
             out.append("_No findings._")
         with open(path, "w", encoding="utf-8") as fh:
             fh.write("\n".join(out))
-        print(f"[+] Markdown: {path}")
+        log.info("wrote markdown: %s", path)
 
 
 @register_builtin
@@ -94,7 +95,7 @@ class JsonReport(Evaluator):
         ]
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(data, fh, indent=2)
-        print(f"[+] JSON: {path}")
+        log.info("wrote JSON: %s", path)
 
 
 @register_builtin
@@ -105,16 +106,17 @@ class Summary(Evaluator):
     def evaluate(self, attempts: list[Attempt], run_info: dict) -> None:
         info = run_info.get("run_info")
         if info is not None:
-            print(
-                f"\n[*] run {info.run_id}: probes={info.probes} attempts={info.attempts_total} "
-                f"ok={info.ok} parse_errors={info.parse_errors} api_errors={info.api_errors} "
-                f"findings={info.findings} wall={info.wall_seconds:.1f}s"
+            log.info(
+                "run %s: probes=%s attempts=%s ok=%s parse_errors=%s api_errors=%s "
+                "findings=%s wall=%.1fs",
+                info.run_id, info.probes, info.attempts_total, info.ok,
+                info.parse_errors, info.api_errors, info.findings, info.wall_seconds,
             )
         gen = run_info.get("generator_summary")
         if gen:
-            print(f"[*] generator: {gen}")
+            log.info("generator: %s", gen)
         errs = [a for a in attempts if a.status == "api_error"]
         if errs:
-            print(f"[!] {len(errs)} attempt(s) failed at the endpoint (first 3):")
+            log.warning("%s attempt(s) failed at the endpoint (first 3):", len(errs))
             for a in errs[:3]:
-                print(f"    {a.source}: {a.generation.error if a.generation else '?'}")
+                log.warning("  %s: %s", a.source, a.generation.error if a.generation else "?")

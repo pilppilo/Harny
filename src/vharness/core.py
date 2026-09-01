@@ -18,6 +18,8 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 
+from .log import log
+
 VERSION = "0.2.0"
 
 # Plugin discovery group: packages declare
@@ -157,7 +159,7 @@ def load_entry_points() -> None:
         try:
             obj = ep.load()
         except Exception as e:  # noqa: BLE001 — a broken plugin shouldn't kill the app
-            print(f"[!] plugin {ep.name} failed to load: {e}")
+            log.warning("plugin %s failed to load: %s", ep.name, e)
             continue
         if hasattr(obj, "register_plugins") and callable(obj.register_plugins):
             obj.register_plugins()

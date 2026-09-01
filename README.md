@@ -26,7 +26,7 @@ latency) lands in a JSONL run log — runs are auditable and replayable.
 
 ```bash
 uv sync                       # deps: just openai
-uv run pytest                 # 53 tests, offline
+uv run pytest                 # 61 tests, offline
 
 # Offline demo of the full pipeline (mock generator, zero API calls):
 uv run python -m vharness scan ~/my-repo --generator mock
@@ -145,9 +145,20 @@ eval(corpus_task(), model="openai/your-model")
 ## Design notes
 
 - **No silent false negatives** — parse failures and API errors are statuses
-  on the attempt (`ok`/`parse_error`/`api_error`), visible in every summary.
-- **Cache-first** — SQLite response cache keyed by model+prompt; re-runs are
-  free, `--no-cache` bypasses.
+  on the attempt (`ok`/`parse_error`/`api_error`/`internal_error`), visible
+  in every summary.
+- **Logging, not printing** — library modules use `logging` (default: warnings
+  only). `-v` shows per-attempt progress during runs, `-vv` debug detail,
+  `-q` fully silent for scripting. Embedded consumers configure handlers
+  freely.
+- **Replayable runs** — JSONL logs open with a `run_start` record and close
+  with `run_end` (multiple runs per file are separable); attempts carry a
+  prompt hash, and with `--log-raw` the full prompt and model text.
+  `vharness replay <log>` re-runs detectors on a log — zero model calls.
+- **CI-friendly** — `--fail-on-findings` exits 1 when anything was found;
+  `-q` + output files make scripted use clean.
+- **Cache-first** — SQLite response cache keyed by endpoint+model+prompt;
+  re-runs are free, `--no-cache` bypasses.
 - **Dry-run everything** — `--dry-run` runs probes (discovery, triage,
   chunking) with zero model calls and no endpoint configured.
 - **Untrusted input** — all code prompts carry an injection guard: analyzed
@@ -169,7 +180,7 @@ src/vharness/
   sarif.py           SARIF 2.1.0 builder (CWE rules, fingerprints)
   inspect_adapter.py optional Inspect AI bridge
   eval_corpus/       ~35 hand-labeled samples (vulnerable + clean, all domains)
-tests/               53 tests: pipeline, registry, chunkers, parsing, SARIF, metrics, config
+tests/               61 tests: pipeline, registry, chunkers, parsing, SARIF, metrics, config, runner/replay
 ```
 
 The scanner grew out of a single-file SAST harness; the analyzers that chunk
