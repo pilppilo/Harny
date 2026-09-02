@@ -89,3 +89,81 @@ def test_replay_from_log(tmp_path, capsys):
     assert rc == 0
     m = json.loads((tmp_path / "m.json").read_text())
     assert m["metrics"]["labeled"] > 0
+
+
+def test_log_verbosity_levels():
+    from vharness.log import get_verbosity, setup
+    setup(0)
+    assert get_verbosity() == 0
+    setup(1)
+    assert get_verbosity() == 1
+    setup(2)
+    assert get_verbosity() == 2
+    setup(quiet=True)
+    assert get_verbosity() == -1
+    setup(0)  # reset
+
+
+def test_runner_recon_and_verbose_logging(tmp_path, caplog):
+    import logging
+    from vharness.core import Finding
+    from vharness.runner import _format_location, _format_telemetry
+
+    # Test format helpers
+    a_fn = Attempt(prompt="p", source="app.py", context={"file": "app.py", "function": "greet", "line": 55})
+    assert _format_location(a_fn) == "app.py:greet:55"
+    a_file = Attempt(prompt="p", source="static/js/app.js", context={"file": "static/js/app.js", "function": "<file>", "line": 1})
+    assert _format_location(a_file) == "static/js/app.js"
+
+    a_fn.generation = Generation(text="{}", cached=True)
+    assert _format_telemetry(a_fn) == " [cached]"
+    a_fn.generation = Generation(text="{}", latency=0.85, prompt_tokens=100, completion_tokens=25)
+    assert _format_telemetry(a_fn) == " [0.85s, 100+25 toks]"
+
+    # Test runner with verbose logging
+    class VulnMock(Mock):
+        def generate(self, system, prompt):
+            return Generation(text="{}", latency=0.1)
+
+    from vharness.detectors.base import Detector, register_builtin
+
+    class CustomDetector(Detector):
+        name = "test-finding-detector"
+        help = "emits a finding"
+
+        def detect(self, attempt):
+            attempt.status = "ok"
+            attempt.verdict = "vulnerable"
+            attempt.findings = [
+                Finding(cwe="CWE-78", severity="High", sink="os.system()",
+                        explanation="Command injection via user input", file="app.py", line=55, function="greet")
+            ]
+
+    register_builtin(CustomDetector)
+    try:
+        with caplog.at_level(logging.INFO, logger="vharness"):
+            r = Runner(VulnMock(), detectors=["test-finding-detector"], workers=1, verbose=1)
+            attempts, info = r.run(["corpus"], {"limit": 2})
+
+            log_text = caplog.text
+            assert "[recon] Triaged" in log_text
+            assert "chunk(s) across" in log_text
+            assert "↳ [High] CWE-78 in os.system() (line 55): Command injection via user input" in log_text
+    finally:
+        from vharness.core import DETECTOR_REGISTRY
+        del DETECTOR_REGISTRY._items["test-finding-detector"]
+        DETECTOR_REGISTRY._instances.pop("test-finding-detector", None)
+
+
+def test_runner_error_logging(caplog):
+    import logging
+
+    class ErrorMock(Mock):
+        def generate(self, system, prompt):
+            return Generation(text="", error="rate limit exceeded (HTTP 429)")
+
+    with caplog.at_level(logging.INFO, logger="vharness"):
+        r = Runner(ErrorMock(), workers=1, verbose=0)
+        attempts, info = r.run(["corpus"], {"limit": 1})
+        assert any("↳ error: rate limit exceeded (HTTP 429)" in record.message for record in caplog.records)
+

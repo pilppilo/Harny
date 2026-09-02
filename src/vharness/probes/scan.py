@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 
 from ..core import Attempt
+from ..log import log
 from .base import Probe, register_builtin
 
 DEFAULT_EXCLUDES = {
@@ -90,13 +91,15 @@ class FileProbe(Probe):
             raise ValueError(f"probe '{self.name}' requires targets=[...] or target='...'")
         excludes = set(kwargs.get("exclude") or DEFAULT_EXCLUDES)
         out: list[Attempt] = []
-        for path in self._discover(targets, excludes):
+        files = self._discover(targets, excludes)
+        for path in files:
             try:
                 with open(path, "rb") as fh:
                     raw = fh.read(MAX_FILE_BYTES + 1)
             except OSError:
                 continue
             if len(raw) > MAX_FILE_BYTES:
+                log.debug("[%s] skip oversize file (%d bytes): %s", self.name, len(raw), path)
                 continue
             # Route: only files this probe claims. Shebang-based probes (shell)
             # need the file head for extensionless routing.
@@ -107,14 +110,18 @@ class FileProbe(Probe):
             except UnicodeDecodeError:
                 content = raw.decode("utf-8", "replace")
             if not self.file_is_interesting(content):
+                log.debug("[%s] skip uninteresting file (no sink match): %s", self.name, path)
                 continue
             root = targets[0] if len(targets) == 1 and os.path.isdir(targets[0]) else None
             display = os.path.relpath(path, root) if root else path
             for name, line, code in self.chunk(content, path):
                 if len(code) > self.max_chunk_chars:
+                    log.debug("[%s] %s: skip oversize chunk '%s' at line %d", self.name, display, name, line)
                     continue
                 if not self.chunk_is_interesting(code):
+                    log.debug("[%s] %s: skip uninteresting chunk '%s' at line %d", self.name, display, name, line)
                     continue
+                log.debug("[%s] %s: accept chunk '%s' at line %d", self.name, display, name, line)
                 out.append(
                     Attempt(
                         prompt=self.user_prompt(code),

@@ -138,12 +138,14 @@ class OpenAICompatible(Generator):
                 break
 
             latency = time.monotonic() - started
+            usage = getattr(response, "usage", None)
+            p_toks = (getattr(usage, "prompt_tokens", 0) or 0) if usage is not None else 0
+            c_toks = (getattr(usage, "completion_tokens", 0) or 0) if usage is not None else 0
             with self._cache_lock:
                 self.stats["latencies"].append(latency)
-                usage = getattr(response, "usage", None)
                 if usage is not None:
-                    self.stats["prompt_tokens"] += getattr(usage, "prompt_tokens", 0) or 0
-                    self.stats["completion_tokens"] += getattr(usage, "completion_tokens", 0) or 0
+                    self.stats["prompt_tokens"] += p_toks
+                    self.stats["completion_tokens"] += c_toks
 
             if not getattr(response, "choices", None):
                 last_error = "endpoint returned empty choices (content filter?)"
@@ -157,7 +159,14 @@ class OpenAICompatible(Generator):
                 continue
 
             self._cache_put(key, raw)
-            return Generation(text=raw, model=self.model, finish_reason=finish, latency=latency)
+            return Generation(
+                text=raw,
+                model=self.model,
+                finish_reason=finish,
+                latency=latency,
+                prompt_tokens=p_toks,
+                completion_tokens=c_toks,
+            )
 
         self.stats["api_errors"] += 1
         return Generation(text="", model=self.model, error=last_error)

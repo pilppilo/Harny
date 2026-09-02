@@ -113,6 +113,8 @@ def _runner(args) -> Runner:
         log_file=log_file,
         log_raw=getattr(args, "log_raw", False),
         skills=skills,
+        verbose=getattr(args, "verbose", 0),
+        show_findings=getattr(args, "show_findings", False),
     )
 
 
@@ -354,8 +356,10 @@ def _common_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--fail-on-findings", action="store_true",
                    help="exit 1 if any findings were produced (for CI)")
     p.add_argument("-v", "--verbose", action="count", default=0,
-                   help="verbosity: -v shows operational/progress, -vv debug (repeatable)")
+                   help="verbosity: -v shows recon breakdown & inline findings, -vv debug triage (repeatable)")
     p.add_argument("-q", "--quiet", action="store_true", help="suppress log output (errors still exit non-zero)")
+    p.add_argument("--show-findings", action="store_true",
+                   help="print inline finding details as they are discovered (implied by -v)")
 
 
 def _generator_args(p: argparse.ArgumentParser, include_model: bool = True) -> None:

@@ -19,7 +19,7 @@ from .core import (
     load_entry_points,
 )
 from .generators.base import Generator
-from .log import log
+from .log import get_verbosity, log
 from .skills import Skill, render_skill_instructions
 
 # Built-ins register when the stage packages are imported.
@@ -27,6 +27,34 @@ from . import detectors  # noqa: F401,E402
 from . import evaluators  # noqa: F401,E402
 from . import generators  # noqa: F401,E402
 from . import probes  # noqa: F401,E402
+
+
+def _format_location(attempt: Attempt) -> str:
+    ctx = attempt.context or {}
+    fn = ctx.get("function")
+    line = ctx.get("line")
+    src = attempt.source or "unknown"
+    if fn and fn != "<file>":
+        return f"{src}:{fn}:{line}" if line else f"{src}:{fn}"
+    if line and line > 1:
+        return f"{src}:{line}"
+    return src
+
+
+def _format_telemetry(attempt: Attempt) -> str:
+    gen = attempt.generation
+    if not gen:
+        return ""
+    parts = []
+    if gen.cached:
+        parts.append("cached")
+    elif gen.latency > 0:
+        parts.append(f"{gen.latency:.2f}s")
+    if gen.prompt_tokens or gen.completion_tokens:
+        parts.append(f"{gen.prompt_tokens}+{gen.completion_tokens} toks")
+    if parts:
+        return f" [{', '.join(parts)}]"
+    return ""
 
 
 @dataclasses.dataclass
@@ -61,6 +89,8 @@ class Runner:
         log_file: str | None = None,
         log_raw: bool = False,
         skills: list[Skill] | None = None,
+        verbose: int | None = None,
+        show_findings: bool = False,
     ) -> None:
         load_entry_points()  # third-party plugins, idempotent
         self.generator = generator
@@ -70,6 +100,8 @@ class Runner:
         self.log_raw = log_raw
         self.skills = list(skills or [])
         self._skill_instructions = render_skill_instructions(self.skills)
+        self.verbose = verbose if verbose is not None else get_verbosity()
+        self.show_findings = show_findings or (self.verbose >= 1)
         self._log_lock = threading.Lock()
         if log_file:
             os.makedirs(os.path.dirname(os.path.abspath(log_file)), exist_ok=True)
@@ -112,6 +144,47 @@ class Runner:
                     a.context = dict(a.context)
                     a.context["skills"] = [s.metadata() for s in self.skills]
             attempts.extend(got)
+
+        # Reconnaissance summary
+        file_chunks: dict[str, list[Attempt]] = {}
+        for a in attempts:
+            file_chunks.setdefault(a.source, []).append(a)
+
+        target_arg = probe_kwargs.get("targets") or probe_kwargs.get("path")
+        target_disp = ""
+        if target_arg:
+            if isinstance(target_arg, list):
+                target_disp = " on " + ", ".join(str(t) for t in target_arg)
+            else:
+                target_disp = f" on {target_arg}"
+
+        log.info(
+            "[recon] Triaged %d chunk(s) across %d file(s)%s (probes: %s)",
+            len(attempts),
+            len(file_chunks),
+            target_disp,
+            ", ".join(probe_names),
+        )
+
+        if (self.verbose >= 1 or self.show_findings) and file_chunks:
+            for src, chs in sorted(file_chunks.items()):
+                details = []
+                for c in chs:
+                    fn = c.context.get("function") if c.context else None
+                    ln = c.context.get("line") if c.context else None
+                    if fn and fn != "<file>":
+                        details.append(f"{fn}:{ln}" if ln else fn)
+                    elif ln and ln > 1:
+                        details.append(f"L{ln}")
+                    else:
+                        details.append("<file>")
+                log.info(
+                    "    • %s (%d chunk%s: %s)",
+                    src,
+                    len(chs),
+                    "s" if len(chs) != 1 else "",
+                    ", ".join(details),
+                )
 
         info = RunInfo(
             run_id=run_id or uuid.uuid4().hex[:12],
@@ -165,10 +238,37 @@ class Runner:
                     log.exception("worker future failed (%d/%d)", i, total)
                     continue
                 done.append(a)
+                loc = _format_location(a)
+                telem = _format_telemetry(a)
+                n_find = len(a.findings)
+                f_str = f"({n_find} finding{'s' if n_find != 1 else ''})"
                 if a.status == "ok":
-                    log.info("[%d/%d] %s → %s (%d findings)", i, total, a.source, a.verdict, len(a.findings))
+                    log.info("[%d/%d] %s → %s %s%s", i, total, loc, a.verdict, f_str, telem)
                 else:
-                    log.info("[%d/%d] %s → %s (%s)", i, total, a.source, a.verdict or "?", a.status)
+                    log.info("[%d/%d] %s → %s (%s)%s", i, total, loc, a.verdict or "?", a.status, telem)
+
+                # Show explicit error message if generation or detector failed
+                if a.status != "ok":
+                    err_msg = None
+                    if a.generation and a.generation.error:
+                        err_msg = a.generation.error
+                    elif a.detector_notes:
+                        err_msg = "; ".join(a.detector_notes)
+                    if err_msg:
+                        log.info("    ↳ error: %s", err_msg)
+
+                # Show finding details if verbose or --show-findings
+                if (self.verbose >= 1 or self.show_findings) and a.findings:
+                    for f in a.findings:
+                        sink_str = f" in {f.sink}" if f.sink else ""
+                        line_str = f" (line {f.line})" if f.line else ""
+                        summary_str = ""
+                        if f.explanation:
+                            exp = f.explanation.splitlines()[0].strip()
+                            if self.verbose < 2 and len(exp) > 110:
+                                exp = exp[:107] + "..."
+                            summary_str = f": {exp}"
+                        log.info("    ↳ [%s] %s%s%s%s", f.severity, f.cwe, sink_str, line_str, summary_str)
 
         for a in done:
             info.ok += a.status == "ok"

@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 .venv/
+activate/
 *.egg-info/
 dist/
 build/
@@ -16,10 +17,11 @@ build/
 .zcode/
 
 # Scan outputs / caches
-report.sarif
-report.md
-report.json
 report.*
+*report*.sarif
+*report*.md
+*report*.json
+*.sarif
 eval_report*.md
 eval_report*_detail.json
 *.sqlite3
