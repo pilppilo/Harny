@@ -63,6 +63,7 @@ class RunInfo:
     probes: list[str]
     generator: str
     model: str = ""
+    provider: str = ""
     detectors: list[str] | None = None
     evaluators: list[str] | None = None
     targets: list[str] | None = None
@@ -198,19 +199,25 @@ class Runner:
             attempts_total=len(attempts),
             skills=[s.metadata() for s in self.skills] or None,
         )
+        # Construct the generator only for a real run so run metadata records
+        # the exact endpoint/model used. Dry runs retain their no-client-call
+        # guarantee.
+        if not dry_run:
+            info.generator = getattr(self.generator, "name", "custom")
+            info.model = getattr(self.generator, "model", "")
+            info.provider = (getattr(self.generator, "base_url", "") or "").rstrip("/")
         self._log_event({"type": "run_start", "run_id": info.run_id, "ts": time.time(),
                          "probes": info.probes, "targets": info.targets,
                          "attempts": len(attempts), "dry_run": dry_run,
-                         "detectors": info.detectors, "skills": info.skills})
+                         "detectors": info.detectors, "skills": info.skills,
+                         "generator": info.generator, "model": info.model,
+                         "provider": info.provider})
         if dry_run:
             info.wall_seconds = time.time() - info.started_at
             self._log_event({"type": "run_end", "run_id": info.run_id, "ts": time.time(),
                              "status": "dry_run", "attempts": len(attempts)})
             return attempts, info
 
-        # Real run — the generator gets constructed here (first .generate call).
-        info.generator = getattr(self.generator, "name", "custom")
-        info.model = getattr(self.generator, "model", "")
         detectors = [DETECTOR_REGISTRY.instantiate(n) for n in self.detector_names]
 
         def work(attempt: Attempt) -> Attempt:

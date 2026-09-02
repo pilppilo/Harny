@@ -216,6 +216,66 @@ def cmd_list(args) -> int:
     return 0
 
 
+def cmd_usage(args) -> int:
+    """Show locally recorded token usage for the resolved endpoint/model."""
+    try:
+        cfg, src = resolve_endpoint(
+            args.base_url, args.api_key, args.model,
+            profile=args.profile,
+            config_file=args.config_file,
+        )
+    except ConfigError as e:
+        raise CLIError(str(e)) from e
+
+    from .usage import read_usage
+
+    paths = args.log_files or [p for p in ("scan_log.jsonl", "eval_log.jsonl") if os.path.isfile(p)]
+    missing = [path for path in args.log_files if not os.path.isfile(path)]
+    if missing:
+        raise CLIError(f"usage log not found or unreadable: {missing[0]}")
+    summaries = read_usage(
+        paths,
+        provider=cfg.base_url,
+        model=cfg.model,
+        all_models=args.all_models,
+    )
+    payload = {
+        "current_provider": cfg.base_url,
+        "current_model": cfg.model,
+        "config_source": src,
+        "usage": [summary.to_dict() for summary in summaries],
+        "account_quota": "unavailable: OpenAI-compatible APIs have no standard quota endpoint",
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2))
+        return 0
+
+    print(f"Current provider: {cfg.base_url}")
+    print(f"Current model:    {cfg.model}")
+    print(f"Config source:    {src}")
+    if not paths:
+        print("\nNo local run logs found. Supply --log-file PATH after running scan, eval, or run.")
+    elif not summaries:
+        print("\nNo recorded usage matches the current provider/model in the selected logs.")
+    else:
+        print("\nLocally recorded usage:")
+        for summary in summaries:
+            print(f"  {summary.provider}  {summary.model}")
+            print(
+                f"    attempts={summary.attempts} completed={summary.completed_requests} "
+                f"cache_hits={summary.cache_hits} api_errors={summary.api_errors}"
+            )
+            print(
+                f"    tokens={summary.total_tokens} "
+                f"(prompt={summary.prompt_tokens}, completion={summary.completion_tokens}) "
+                f"latency_p50={summary.latency_p50:.2f}s"
+            )
+            if summary.responses_without_usage:
+                print(f"    usage unavailable in {summary.responses_without_usage} response(s)")
+    print("\nAccount quota/remaining credits: unavailable through the generic OpenAI-compatible API.")
+    return 0
+
+
 def cmd_list_skills(args) -> int:
     """List valid skills from explicit directories or their child directories."""
     roots = args.paths or ["."]
@@ -443,6 +503,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     list_p = sub.add_parser("list", help="list registered plugins")
     list_p.set_defaults(func=cmd_list)
+
+    usage_p = sub.add_parser("usage", help="show locally recorded usage for the current endpoint/model")
+    usage_p.add_argument("--base-url", help="OpenAI-compatible endpoint (env VHARNESS_BASE_URL, config profile)")
+    usage_p.add_argument("--api-key", help="API key (only used to resolve the configured provider)")
+    usage_p.add_argument("--model", help="model name (env VHARNESS_MODEL, config profile)")
+    usage_p.add_argument("--profile", default=None, help="named configuration profile")
+    usage_p.add_argument("--config", dest="config_file", default=None, help="configuration file path")
+    usage_p.add_argument("--log-file", dest="log_files", action="append", default=[], metavar="PATH",
+                         help="JSONL run log to include (repeatable; defaults to local scan/eval logs)")
+    usage_p.add_argument("--all-models", action="store_true", help="show every provider/model found in selected logs")
+    usage_p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+    usage_p.set_defaults(func=cmd_usage)
 
     skills_p = sub.add_parser("list-skills", help="list valid local SKILL.md directories")
     skills_p.add_argument("paths", nargs="*", help="skill directories or directories to search")

@@ -81,6 +81,21 @@ uv run python -m vharness eval
 uv run python -m vharness eval --dataset ~/data/val.jsonl --skip-corpus
 ```
 
+### Local usage history
+
+`usage` resolves the same current endpoint and model configuration, then sums
+token counts, cache hits, errors, and latency from Vharness JSONL run logs:
+
+```bash
+uv run python -m vharness usage
+uv run python -m vharness usage --profile openrouter --log-file scan_log.jsonl
+uv run python -m vharness usage --all-models --json
+```
+
+This is Vharness-recorded usage, not provider billing or remaining account
+quota. OpenAI-compatible APIs do not define a portable quota endpoint; a
+provider-specific usage plugin can add one later.
+
 ### Local skills
 
 Runs may include local, read-only `SKILL.md` instructions. Each skill file
