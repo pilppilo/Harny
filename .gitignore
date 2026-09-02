@@ -16,7 +16,7 @@ build/
 # Local workspace artifacts
 .zcode/
 
-# Scan outputs / caches
+# Scan outputs / caches / logs
 report.*
 *report*.sarif
 *report*.md
@@ -24,6 +24,8 @@ report.*
 *.sarif
 eval_report*.md
 eval_report*_detail.json
+eval_metrics.json
+*.jsonl
 *.sqlite3
 
 # Local planning notes; keep the tracked transition roadmap.
