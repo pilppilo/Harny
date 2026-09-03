@@ -6,6 +6,9 @@ binding contract for the first dynamic-assessment milestone that follows it.
 This document retains the durable principles and broader transition direction;
 capabilities beyond those contracts remain future work.
 
+Current state: Workspace v0 is implemented in commit `2b7e6e4`. The dynamic
+assessment transition remains at its pre-HTTP foundation stage.
+
 ## Objective
 
 Evolve vharness from a batch-oriented static-analysis harness into an

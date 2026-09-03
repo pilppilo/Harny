@@ -3,6 +3,10 @@
 ## Current implementation boundary
 
 `dynamic-safe-method-assessment.md` is the binding Phase 1 specification.
+`workspace-project-foundation.md` is its completed prerequisite implementation
+milestone. Workspace v0 provides local run organization only; it does not grant
+assessment scope or policy authority. The safe-method assessment is the next
+implementation milestone.
 Where this roadmap describes manifests, DNS names, crawling, OPTIONS, resume,
 concurrency, multiple agents, findings, CTF objectives, or active validation,
 that behavior is post-Phase 1. Phase 1 derives and persists an immutable

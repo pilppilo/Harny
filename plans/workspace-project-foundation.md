@@ -1,5 +1,22 @@
 # Workspace and project foundation: v0
 
+> Status: implemented in commit `2b7e6e4` (`Add project workspace foundation`).
+> Verified with 84 passing tests.
+
+## Delivered v0
+
+- `vharness project init`, `project status`, and `project runs` manage explicit
+  local projects.
+- `vharness run`, `scan`, and `eval` accept `--project PATH` while retaining
+  their standalone behavior when it is omitted.
+- Project-scoped runs receive an isolated ID, lifecycle metadata, default event
+  log/report paths, and a `.vharness/runs/<run-id>/` home.
+- Manifest, run-state, and symlink-confinement validation are covered by unit
+  and CLI integration tests.
+
+Dynamic assessments and the TUI remain unimplemented. They can now depend on
+the project/run service instead of inventing their own storage layout.
+
 ## Objective
 
 Introduce a small, local project/workspace model before dynamic assessments or
@@ -66,6 +83,7 @@ planned local-state directory. It refuses to replace an existing manifest.
 All existing workflows accept an optional `--project PATH`:
 
 ```bash
+vharness run --project . --probes web src/
 vharness scan --project . src/
 vharness eval --project .
 ```
@@ -159,18 +177,19 @@ IDs or artifact names.
 
 ## Implementation order
 
-1. Manifest schema, project resolution, safe state-layout helpers, and unit
-   tests.
-2. `project init`, `status`, and `runs` CLI commands.
-3. Run lifecycle metadata and `--project` support for `scan` and `eval`.
-4. Project-aware report/log defaults with standalone compatibility tests.
+1. ~~Manifest schema, project resolution, safe state-layout helpers, and unit
+   tests.~~
+2. ~~`project init`, `status`, and `runs` CLI commands.~~
+3. ~~Run lifecycle metadata and `--project` support for `run`, `scan`, and
+   `eval`.~~
+4. ~~Project-aware report/log defaults with standalone compatibility tests.~~
 5. Require project context for the dynamic safe-method assessment milestone.
 6. Use the same project/run service from the TUI.
 
 ## Completion criteria
 
-Workspace v0 is complete when an operator can initialize a project, run an
-existing scan or eval into a self-contained local run directory, reopen its
-status and outputs later, and still run all existing workflows without a
-project. Dynamic assessment and the TUI start only after this contract is
-implemented and tested.
+Workspace v0 is complete: an operator can initialize a project, run an
+existing generic run, scan, or eval into a self-contained local run directory,
+reopen its status and outputs later, and still run all existing workflows
+without a project. Dynamic assessment and the TUI may now consume this
+contract.

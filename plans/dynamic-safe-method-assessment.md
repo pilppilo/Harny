@@ -1,5 +1,9 @@
 # Dynamic safe-method assessment: Phase 1
 
+> Status: ready to implement. Its Workspace v0 prerequisite was completed in
+> commit `2b7e6e4`; dynamic HTTP, policy, planner, and evidence capabilities
+> remain unimplemented.
+
 ## Objective
 
 Add a small, generic dynamic-assessment vertical slice to `vharness` for
@@ -317,7 +321,8 @@ operator-facing log clarity.
 
 ## Implementation order
 
-1. Complete the Workspace v0 prerequisite and its project-scoped run service.
+1. ~~Complete the Workspace v0 prerequisite and its project-scoped run
+   service.~~
 2. Literal-loopback URL canonicalization and validation.
 3. Direct HTTP executor with manual redirects, caps, and proxy bypass.
 4. Transactional, versioned SQLite event persistence and ordered JSONL export.

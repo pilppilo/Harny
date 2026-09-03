@@ -1,5 +1,8 @@
 # TUI operator console: initial plan
 
+> Status: planned. Its Workspace v0 prerequisite was completed in commit
+> `2b7e6e4`; the TUI itself has not been started.
+
 ## Objective
 
 Add an optional terminal user interface that makes Vharness easier to operate
