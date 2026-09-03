@@ -5,6 +5,7 @@ description = "Pluggable LLM security harness: probe → generator → detector 
 requires-python = ">=3.10"
 dependencies = [
     "openai>=1.40",
+    "tomli>=2.0; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]

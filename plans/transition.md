@@ -1,9 +1,10 @@
 # Dynamic assessment transition
 
-`dynamic-safe-method-assessment.md` is the binding implementation contract for
-the first dynamic-assessment milestone. This document retains the durable
-principles and broader transition direction; capabilities beyond that Phase 1
-contract remain future work.
+`workspace-project-foundation.md` is the prerequisite implementation contract
+for local project/run organization. `dynamic-safe-method-assessment.md` is the
+binding contract for the first dynamic-assessment milestone that follows it.
+This document retains the durable principles and broader transition direction;
+capabilities beyond those contracts remain future work.
 
 ## Objective
 

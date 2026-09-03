@@ -25,6 +25,14 @@ from .core import (
 from .log import log, setup as log_setup
 from .runner import Runner
 from .skills import SkillError, load_skills
+from .workspace import (
+    WorkspaceError,
+    create_run,
+    initialize_project,
+    list_runs,
+    resolve_project,
+    update_run,
+)
 
 #: Probes used by the ``scan`` preset (filesystem code scanning).
 SCAN_PROBES = ["ccpp", "web", "shell", "distroconf"]
@@ -135,7 +143,87 @@ def _probe_kwargs(args, probe_names: list[str]) -> dict:
     return kw
 
 
+def _project_inputs(args, workflow: str) -> dict:
+    """Persist only non-secret, normalized launch context in project metadata."""
+    fields = (
+        "targets", "analyzers", "format", "dataset", "corpus_dir", "limit",
+        "exclude", "generator", "model", "profile", "dry_run", "workers",
+    )
+    inputs = {field: getattr(args, field) for field in fields if getattr(args, field, None) is not None}
+    inputs["workflow"] = workflow
+    return inputs
+
+
+def _begin_project_run(args, workflow: str):
+    project_path = getattr(args, "project", None)
+    if not project_path:
+        return None
+    try:
+        project = resolve_project(project_path)
+        if not getattr(args, "profile", None) and project.default_profile:
+            args.profile = project.default_profile
+        run = create_run(project, workflow, _project_inputs(args, workflow))
+    except WorkspaceError as exc:
+        raise CLIError(str(exc)) from exc
+
+    # Project mode owns only defaults. Explicit output paths remain untouched
+    # and are recorded below as external locations.
+    if not getattr(args, "no_log", False) and not getattr(args, "log_file", None):
+        args.log_file = str(run.events_path)
+    if workflow == "scan" and not getattr(args, "out", None):
+        args.out = str(run.reports_dir / "report")
+    if workflow == "eval" and not getattr(args, "metrics_out", None):
+        args.metrics_out = str(run.reports_dir / "eval_metrics.json")
+
+    outputs = {"run_dir": str(run.path), "reports_dir": str(run.reports_dir)}
+    for field in ("log_file", "out", "sarif_out", "markdown_out", "json_out", "metrics_out"):
+        value = getattr(args, field, None)
+        if value:
+            outputs[field] = str(value)
+    try:
+        update_run(run, status="running", outputs=outputs)
+    except WorkspaceError as exc:  # pragma: no cover - filesystem failures are platform-specific
+        raise CLIError(str(exc)) from exc
+    log.info("project %s: run %s (%s)", project.name, run.run_id, workflow)
+    return run
+
+
+def _finish_project_run(run, code: int, *, stop_reason: str | None = None) -> None:
+    if run is None:
+        return
+    status = "completed" if code == 0 else "failed"
+    try:
+        update_run(run, status=status, exit_code=code, stop_reason=stop_reason)
+    except WorkspaceError as exc:  # pragma: no cover - filesystem failures are platform-specific
+        log.error("could not update project run %s: %s", run.run_id, exc)
+
+
 def cmd_run(args) -> int:
+    workflow = getattr(args, "command", "run")
+    if workflow == "run" and not getattr(args, "project", None):
+        args.log_file = args.log_file or "scan_log.jsonl"
+    project_run = _begin_project_run(args, workflow) if workflow in {"run", "scan", "eval"} else None
+    try:
+        code = _cmd_run(args)
+    except KeyboardInterrupt:
+        if project_run is not None:
+            try:
+                update_run(project_run, status="cancelled", stop_reason="operator_interrupt")
+            except WorkspaceError as exc:  # pragma: no cover - filesystem failures are platform-specific
+                log.error("could not update cancelled project run %s: %s", project_run.run_id, exc)
+        raise
+    except Exception:
+        _finish_project_run(project_run, 1, stop_reason="error")
+        raise
+    _finish_project_run(
+        project_run,
+        code,
+        stop_reason="dry_run" if getattr(args, "dry_run", False) else ("fail_on_findings" if code else "complete"),
+    )
+    return code
+
+
+def _cmd_run(args) -> int:
     probe_names = [p.strip() for p in args.probes.split(",") if p.strip()]
     for p in probe_names:
         try:
@@ -186,6 +274,9 @@ def cmd_scan(args) -> int:
     if getattr(args, "analyzers", None):
         args.probes = args.analyzers
     args.evaluators = args.format
+    if not args.project:
+        args.out = args.out or "report"
+        args.log_file = args.log_file or "scan_log.jsonl"
     return cmd_run(args)
 
 
@@ -196,8 +287,66 @@ def cmd_eval(args) -> int:
     if getattr(args, "skip_corpus", False):
         args.probes = "chat-dataset"
     args.evaluators = "metrics,summary"
-    args.log_file = args.log_file or "eval_log.jsonl"
+    if not args.project:
+        args.log_file = args.log_file or "eval_log.jsonl"
+        args.metrics_out = args.metrics_out or "eval_metrics.json"
     return cmd_run(args)
+
+
+def cmd_project_init(args) -> int:
+    try:
+        project = initialize_project(
+            args.path,
+            name=args.name,
+            default_profile=args.default_profile,
+            add_gitignore=not args.no_gitignore,
+        )
+    except WorkspaceError as exc:
+        raise CLIError(str(exc)) from exc
+    print(f"Initialized Vharness project: {project.name}")
+    print(f"  manifest: {project.manifest_path}")
+    print(f"  local state: {project.state_dir}")
+    return 0
+
+
+def cmd_project_status(args) -> int:
+    try:
+        project = resolve_project(args.project)
+        runs = list_runs(project)
+    except WorkspaceError as exc:
+        raise CLIError(str(exc)) from exc
+    statuses: dict[str, int] = {}
+    for run in runs:
+        status = run.get("status", "unknown")
+        statuses[status] = statuses.get(status, 0) + 1
+    print(f"Project: {project.name}")
+    print(f"Root:    {project.root}")
+    print(f"Manifest: {project.manifest_path}")
+    print(f"State:   {project.state_dir}")
+    print(f"Sources: {', '.join(project.source_roots)}")
+    if project.default_profile:
+        print(f"Default profile: {project.default_profile}")
+    suffix = " (" + ", ".join(f"{key}={value}" for key, value in sorted(statuses.items())) + ")" if runs else ""
+    print(f"Runs: {len(runs)}{suffix}")
+    return 0
+
+
+def cmd_project_runs(args) -> int:
+    try:
+        project = resolve_project(args.project)
+        runs = list_runs(project)
+    except WorkspaceError as exc:
+        raise CLIError(str(exc)) from exc
+    if args.json:
+        print(json.dumps(runs, indent=2))
+        return 0
+    if not runs:
+        print("No project runs.")
+        return 0
+    print("RUN ID\tWORKFLOW\tSTATUS\tCREATED")
+    for run in runs:
+        print("\t".join(str(run.get(field, "-")) for field in ("run_id", "workflow", "status", "created_at")))
+    return 0
 
 
 def cmd_list(args) -> int:
@@ -454,6 +603,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     run_p = sub.add_parser("run", help="compose probes × generator × detectors × evaluators")
     run_p.add_argument("targets", nargs="*", help="files/dirs (for filesystem probes)")
+    run_p.add_argument("--project", help="explicit Vharness project directory")
     run_p.add_argument("--probes", required=True, help="comma list of probe names (see `vharness list`)")
     run_p.add_argument("--evaluators", default=None, help="comma list (default: summary)")
     run_p.add_argument("--detectors", default=None, help="comma list (default: json-verdict)")
@@ -468,26 +618,44 @@ def build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("--json-out", default=None)
     run_p.add_argument("--metrics-out", default=None)
     _generator_args(run_p)
-    run_p.set_defaults(func=cmd_run, log_file="scan_log.jsonl")
+    run_p.set_defaults(func=cmd_run, log_file=None)
 
     scan_p = sub.add_parser("scan", help="preset: scan code with all code-domain probes")
     scan_p.add_argument("targets", nargs="+")
+    scan_p.add_argument("--project", help="explicit Vharness project directory")
     scan_p.add_argument("--analyzers", default=None, help="restrict to comma list (ccpp,web,shell,distroconf)")
     scan_p.add_argument("--format", default="sarif,markdown", help="comma list: sarif,markdown,json,summary")
-    scan_p.add_argument("--out", default="report")
+    scan_p.add_argument("--out", default=None)
     scan_p.add_argument("--dry-run", action="store_true")
     scan_p.add_argument("--exclude", action="append", default=[], help="dir name to skip (repeatable)")
     _generator_args(scan_p)
-    scan_p.set_defaults(func=cmd_scan, log_file="scan_log.jsonl")
+    scan_p.set_defaults(func=cmd_scan, log_file=None)
 
     eval_p = sub.add_parser("eval", help="preset: score a model on labeled data")
+    eval_p.add_argument("--project", help="explicit Vharness project directory")
     eval_p.add_argument("--corpus-dir", default=None)
     eval_p.add_argument("--dataset", default=None, help="chat-format JSONL with code samples")
     eval_p.add_argument("--limit", type=int, default=None)
     eval_p.add_argument("--skip-corpus", action="store_true")
-    eval_p.add_argument("--metrics-out", default="eval_metrics.json")
+    eval_p.add_argument("--metrics-out", default=None)
     _generator_args(eval_p)
-    eval_p.set_defaults(func=cmd_eval, log_file="eval_log.jsonl")
+    eval_p.set_defaults(func=cmd_eval, log_file=None)
+
+    project_p = sub.add_parser("project", help="initialize and inspect local Vharness projects")
+    project_sub = project_p.add_subparsers(dest="project_command", required=True)
+    project_init_p = project_sub.add_parser("init", help="create a project manifest and local state directory")
+    project_init_p.add_argument("path", nargs="?", default=".")
+    project_init_p.add_argument("--name", default=None, help="display name (default: directory name)")
+    project_init_p.add_argument("--default-profile", default=None, help="non-secret config profile name")
+    project_init_p.add_argument("--no-gitignore", action="store_true", help="do not add .vharness/ to .gitignore")
+    project_init_p.set_defaults(func=cmd_project_init)
+    project_status_p = project_sub.add_parser("status", help="show project metadata and run counts")
+    project_status_p.add_argument("--project", required=True, help="project directory")
+    project_status_p.set_defaults(func=cmd_project_status)
+    project_runs_p = project_sub.add_parser("runs", help="list persisted project runs")
+    project_runs_p.add_argument("--project", required=True, help="project directory")
+    project_runs_p.add_argument("--json", action="store_true", help="emit JSON")
+    project_runs_p.set_defaults(func=cmd_project_runs)
 
     replay_p = sub.add_parser("replay", help="re-run detectors on a previous JSONL run log (no model calls)")
     replay_p.add_argument("log_path", help="JSONL run log (must have been written with --log-raw to re-detect)")

@@ -13,10 +13,12 @@ or flag-handling behavior into `vharness`.
 
 ## Authority and boundary
 
-This is the binding Phase 1 implementation and acceptance contract. It
-overrides broader roadmap language in `plans.md` for Phase 1. Phase 1 has one
-sequential planner, one single-origin HTTP capability, a fixed safe-method
-policy, and no resumable or multi-agent execution.
+This is the binding dynamic-assessment Phase 1 implementation and acceptance
+contract. It follows the prerequisite Workspace v0 contract in
+`workspace-project-foundation.md` and overrides broader roadmap language in
+`plans.md` for dynamic Phase 1. It has one sequential planner, one
+single-origin HTTP capability, a fixed safe-method policy, and no resumable or
+multi-agent execution.
 
 Phase 1 constructs and persists an immutable internal scope snapshot from the
 CLI target and this fixed policy. User-authored manifests, CIDRs, DNS names,
@@ -43,16 +45,20 @@ handler is read-only. The CLI and documentation must say this explicitly.
 
 ```bash
 vharness assess \
+  --project . \
   --target http://127.0.0.1:5050 \
   --mode safe-method \
   --max-decisions 12 \
   --max-requests 16 \
   --max-redirects 3 \
   --max-duration 60 \
-  --state assessment.sqlite3 \
-  --out assessment.jsonl \
   -vv
 ```
+
+`assess` requires a Workspace v0 project. It stores authoritative SQLite state,
+ordered JSONL export, reports, and evidence under the created project's run
+directory. A project organizes local state only; its manifest cannot broaden
+the literal-loopback scope or safe-method policy.
 
 At startup, print the canonical origin, literal-loopback restriction, allowed
 methods, redirect policy, and budgets. For example:
@@ -205,9 +211,10 @@ planner proposal duplicate.
 
 ## Evidence, events, and reporting
 
-`AssessmentStore` SQLite state is authoritative. `--state` is explicit;
-`--out` exports committed state to ordered JSONL and a human summary. Never
-create an undisclosed database in the working directory.
+`AssessmentStore` SQLite state is authoritative. Workspace v0 assigns the
+explicit per-run state location; committed state exports to ordered JSONL and a
+human summary in the same run directory. Never create an undisclosed database
+in the working directory.
 
 Add an append-only versioned event table with at least:
 
@@ -310,14 +317,15 @@ operator-facing log clarity.
 
 ## Implementation order
 
-1. Literal-loopback URL canonicalization and validation.
-2. Direct HTTP executor with manual redirects, caps, and proxy bypass.
-3. Transactional, versioned SQLite event persistence and ordered JSONL export.
-4. Structured planner parser and assessment loop with precise counters and
+1. Complete the Workspace v0 prerequisite and its project-scoped run service.
+2. Literal-loopback URL canonicalization and validation.
+3. Direct HTTP executor with manual redirects, caps, and proxy bypass.
+4. Transactional, versioned SQLite event persistence and ordered JSONL export.
+5. Structured planner parser and assessment loop with precise counters and
    stop reasons.
-5. CLI, human summary, and unit-test matrix.
-6. External BlackVault acceptance driver.
-7. Manual live-model smoke run.
+6. CLI, human summary, and unit-test matrix.
+7. External BlackVault acceptance driver.
+8. Manual live-model smoke run.
 
 ## Completion criteria
 

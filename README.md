@@ -36,6 +36,25 @@ uv run python -m vharness eval --generator mock
 uv run python -m vharness list
 ```
 
+## Local projects
+
+Projects keep a tracked, non-secret manifest beside ignored local run state.
+They are optional for existing static workflows, but make runs and reports easy
+to reopen later:
+
+```bash
+uv run python -m vharness project init ~/work/my-service
+uv run python -m vharness project status --project ~/work/my-service
+uv run python -m vharness scan --project ~/work/my-service ~/work/my-service/src --generator mock
+uv run python -m vharness project runs --project ~/work/my-service
+```
+
+`vharness.project.toml` stores project metadata and an optional profile name;
+it never stores API keys, target credentials, or assessment permissions. Each
+project-scoped run is written under `.vharness/runs/<run-id>/`, which the
+initializer adds to `.gitignore` without replacing existing rules. Omitting
+`--project` preserves the standalone output behavior documented below.
+
 ## Real runs — any OpenAI-compatible endpoint
 
 Settings resolve as **CLI flags → env vars → config file** (per field; the
