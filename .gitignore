@@ -27,7 +27,3 @@ eval_report*_detail.json
 eval_metrics.json
 *.jsonl
 *.sqlite3
-
-# Local planning notes; keep the tracked transition roadmap.
-plans/*
-!plans/transition.md

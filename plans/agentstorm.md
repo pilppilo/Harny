@@ -1,5 +1,9 @@
 # AgentStorm: extensible agent and tool runtime
 
+> Future architecture exploration. This document does not define the Phase 1
+> dynamic-assessment implementation; see `dynamic-safe-method-assessment.md`
+> for that binding, single-planner milestone.
+
 ## Objective
 
 Evolve Vharness into a general agent-and-tool runtime that supports agents and

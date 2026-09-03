@@ -1,5 +1,10 @@
 # Dynamic assessment transition
 
+`dynamic-safe-method-assessment.md` is the binding implementation contract for
+the first dynamic-assessment milestone. This document retains the durable
+principles and broader transition direction; capabilities beyond that Phase 1
+contract remain future work.
+
 ## Objective
 
 Evolve vharness from a batch-oriented static-analysis harness into an
