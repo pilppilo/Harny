@@ -46,3 +46,13 @@ verification.
 Do not design, add, propose, or require replacement/adaptor systems for those
 external responsibilities. Do not interpret a benchmark scenario as a product
 capability restriction.
+
+## Planning protocol
+
+For Vharness Next planning and implementation, start at `plans/README.md` and
+read its **Current focus** documents. Follow `plans/PROTOCOL.md`; do not treat
+unindexed or inherited plans as governing direction. After changing plans, run
+`/home/flub/plant/plant check plans` from the repository root. Plant is a
+separate project; preview vendored updates with
+`/home/flub/plant/plant update plans --dry-run` and apply them only through an
+explicit adoption change that records the source revision.

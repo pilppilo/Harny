@@ -1,0 +1,16 @@
+{
+  "files": {
+    "PROTOCOL.md": "1125914c32c2eaedbc136ca170929c3501704db913c479b61a50824fadd4229d",
+    "schema/metadata.schema.json": "e6fa47624a542526bb46ee1fe81808c40d124c5c6b7c8e6296a1beafd2d6d04e",
+    "templates/architecture.md": "5a9bd592178543e666b30b5915fbc5da4b8a95ed994bb1cb90e6a1c67c6a3c42",
+    "templates/benchmark.md": "dac3b831ee8a3573538148defe881eba169d6154e6e088afd09b6a7466c6c6a2",
+    "templates/decision.md": "566e18d49929c7626811b058e37c632735e668f07620ad3df611831757e3bd69",
+    "templates/experiment.md": "193114638c41adc971a0f67c35dfd8454746468fffa32bc0e681a9a5d020159a",
+    "templates/index.md": "3aff2a40237f3aa7cf7617d199a75542a1201aafd5936e332b7a80924c700d7b",
+    "templates/phase.md": "8ddf3bf11fc26bb217cb60bd0e8d83855fa7c26efa1bbc465231979ff1e28c7f",
+    "templates/roadmap.md": "1d990cba1872df930045b4bb87eb996d1614fa9a8a060c2d596419096ebcac44",
+    "templates/schematic.md": "5356d5a05fb4387a5a4764b3c5ddf6c171c6d673030d57ea88fcd187299a3456",
+    "templates/workstream.md": "3cff7b7edc807038d18627d2816262ab1793450c034754ee4ac2a7f3507389af"
+  },
+  "source_revision": "712f419"
+}

@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://plant.local/schema/metadata.schema.json",
+  "title": "Plant document metadata",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "title",
+    "type",
+    "status",
+    "owners",
+    "created",
+    "updated",
+    "depends_on",
+    "supersedes",
+    "related"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^(ARCH|ROAD|PHASE|ADR|BENCH|EXP|SCHEM|WORK)-[0-9]{4}$"
+    },
+    "title": {"type": "string", "minLength": 1},
+    "type": {
+      "enum": [
+        "architecture",
+        "roadmap",
+        "phase",
+        "decision",
+        "benchmark",
+        "experiment",
+        "schematic",
+        "workstream"
+      ]
+    },
+    "status": {
+      "enum": [
+        "draft",
+        "proposed",
+        "accepted",
+        "rejected",
+        "ready",
+        "implementing",
+        "implemented",
+        "verified",
+        "blocked",
+        "superseded",
+        "planned",
+        "running",
+        "completed",
+        "abandoned",
+        "current",
+        "active",
+        "closed"
+      ]
+    },
+    "owners": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true
+    },
+    "created": {"type": "string", "format": "date"},
+    "updated": {"type": "string", "format": "date"},
+    "depends_on": {"$ref": "#/$defs/references"},
+    "supersedes": {"$ref": "#/$defs/references"},
+    "related": {"$ref": "#/$defs/references"}
+  },
+  "allOf": [
+    {
+      "oneOf": [
+        {"properties": {"type": {"const": "architecture"}, "id": {"pattern": "^ARCH-[0-9]{4}$"}}},
+        {"properties": {"type": {"const": "roadmap"}, "id": {"pattern": "^ROAD-[0-9]{4}$"}}},
+        {"properties": {"type": {"const": "phase"}, "id": {"pattern": "^PHASE-[0-9]{4}$"}}},
+        {"properties": {"type": {"const": "decision"}, "id": {"pattern": "^ADR-[0-9]{4}$"}}},
+        {"properties": {"type": {"const": "benchmark"}, "id": {"pattern": "^BENCH-[0-9]{4}$"}}},
+        {"properties": {"type": {"const": "experiment"}, "id": {"pattern": "^EXP-[0-9]{4}$"}}},
+        {"properties": {"type": {"const": "schematic"}, "id": {"pattern": "^SCHEM-[0-9]{4}$"}}},
+        {"properties": {"type": {"const": "workstream"}, "id": {"pattern": "^WORK-[0-9]{4}$"}}}
+      ]
+    },
+    {
+      "if": {"properties": {"type": {"enum": ["architecture", "roadmap", "benchmark"]}}},
+      "then": {"properties": {"status": {"enum": ["draft", "proposed", "accepted", "rejected", "superseded"]}}}
+    },
+    {
+      "if": {"properties": {"type": {"const": "phase"}}},
+      "then": {"properties": {"status": {"enum": ["draft", "proposed", "accepted", "ready", "implementing", "implemented", "verified", "blocked", "superseded"]}}}
+    },
+    {
+      "if": {"properties": {"type": {"const": "decision"}}},
+      "then": {"properties": {"status": {"enum": ["proposed", "accepted", "rejected", "superseded"]}}}
+    },
+    {
+      "if": {"properties": {"type": {"const": "experiment"}}},
+      "then": {"properties": {"status": {"enum": ["draft", "planned", "running", "completed", "abandoned"]}}}
+    },
+    {
+      "if": {"properties": {"type": {"const": "schematic"}}},
+      "then": {"properties": {"status": {"enum": ["draft", "current", "superseded"]}}}
+    },
+    {
+      "if": {"properties": {"type": {"const": "workstream"}}},
+      "then": {"properties": {"status": {"enum": ["active", "closed"]}}}
+    }
+  ],
+  "$defs": {
+    "references": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^(ARCH|ROAD|PHASE|ADR|BENCH|EXP|SCHEM|WORK)-[0-9]{4}$"
+      },
+      "uniqueItems": true
+    }
+  }
+}

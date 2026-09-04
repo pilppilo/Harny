@@ -1,0 +1,93 @@
+---
+id: PHASE-0002
+title: Add the general agent loop memory and operator interaction
+type: phase
+status: accepted
+owners: []
+created: 2026-09-04
+updated: 2026-09-04
+depends_on: [PHASE-0001]
+supersedes: []
+related: [ARCH-0001, BENCH-0001, WORK-0001]
+---
+
+# Add the general agent loop memory and operator interaction
+
+## Observable outcome
+
+A model-driven Vharness session completes bounded tasks through a fake or simple
+external environment, maintains evidence-backed memory, constructs reproducible
+bounded context, and accepts live operator steering without losing causal state.
+The same kernel runs a software fixture and representative Gymnasium fixtures.
+
+## Entrance criteria
+
+PHASE-0001 is verified. Its replay, crash, and external-boundary evidence is
+linked from WORK-0001. BENCH-0001 run-manifest fields are available.
+
+## In scope
+
+- Typed model result handling for action, memory, evaluation, question, wait,
+  and completion proposals through the existing model provider boundary.
+- Working, episodic, and knowledge projections with evidence/provenance links.
+- Deterministic context bands, ranking, de-duplication, and context manifests.
+- Token/action/time budgets enforced as coordinator scheduling limits.
+- A live operator surface showing objective, plan, action/receipt stream, current
+  evidence, budgets, questions, and acknowledged steering.
+- Mechanical adapters for deterministic software and Gymnasium fixtures.
+- Context/retrieval and end-to-end metrics from BENCH-0001.
+
+## Out of scope
+
+Supervisor model calls, automated stagnation response, candidate branching,
+full benchmark campaigns, benchmark-specific prompts, multi-session shared
+memory, and replacing the current default CLI.
+
+## Contracts added or changed
+
+Add the typed `AgentResult` union and projection/context manifest versions. Do
+not change external action or receipt semantics from PHASE-0001. Gymnasium is an
+environment adapter around official reset/step values, not an agent profile.
+
+## Implementation sequence
+
+1. Connect typed model results to the coordinator using a scripted model first.
+2. Implement working/knowledge projections and explicit hypothesis transitions.
+3. Implement FTS5 ranking, deterministic selection, and context manifests.
+4. Add episodic compaction as derived events with source ranges.
+5. Connect a real model adapter and repair malformed outputs within a budget.
+6. Expose the live operator view and durable conversation/control path.
+7. Run the same kernel against software and Gymnasium fixtures.
+
+## Compatibility and migration
+
+Keep existing generator providers usable by adapting their request/usage path,
+not their old pipeline semantics. New CLI entry points remain opt-in. Sessions
+created under PHASE-0001 replay without reinterpretation; new projection versions
+rebuild from their events.
+
+## Test strategy
+
+Golden journal fixtures assert identical context manifests for fixed budgets.
+Tests cover mandatory-item overflow, contradictory evidence, summary provenance,
+stale model cursors, malformed results, budget exhaustion, and steering while an
+action is pending. End-to-end seeded runs compare fresh process and resumed
+outcomes. Benchmark evidence follows BENCH-0001 without a local duplicate grader.
+
+## Exit criteria and required evidence
+
+- The software and Gymnasium fixtures complete with one unchanged kernel policy.
+- Fixed journals produce deterministic contexts within budget.
+- Every stored fact/hypothesis and summary resolves to source events.
+- Operator messages are visible, durable, acknowledged, and affect later context.
+- Paused sessions make no new model calls or proposal submissions.
+- Resume tests show no lost direction, duplicated effect, or projection drift.
+- BENCH-0001 metrics and run artifacts are linked from WORK-0001.
+
+## Risks and recovery
+
+Retrieval can look plausible while omitting decisive evidence. Inspect context
+manifests and add a focused EXP document before adding embeddings or learned
+ranking. If model schemas are unreliable, improve one repair boundary rather
+than adding provider-specific reasoning paths.
+
