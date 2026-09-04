@@ -29,6 +29,11 @@ def _out_path(run_info: dict, default: str, requested: str | None, ext: str) -> 
     return default
 
 
+def _write_parent(path: str) -> None:
+    parent = os.path.dirname(os.path.abspath(path))
+    os.makedirs(parent, exist_ok=True)
+
+
 @register_builtin
 class SarifReport(Evaluator):
     name = "sarif"
@@ -37,6 +42,7 @@ class SarifReport(Evaluator):
     def evaluate(self, attempts: list[Attempt], run_info: dict) -> None:
         path = _out_path(run_info, "report.sarif", run_info.get("sarif_out"), "sarif")
         sarif = build_sarif(list(_all_findings(attempts)))
+        _write_parent(path)
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(sarif, fh, indent=2)
         log.info("wrote SARIF: %s", path)
@@ -74,6 +80,7 @@ class MarkdownReport(Evaluator):
                 out.append("")
         if not findings:
             out.append("_No findings._")
+        _write_parent(path)
         with open(path, "w", encoding="utf-8") as fh:
             fh.write("\n".join(out))
         log.info("wrote markdown: %s", path)
@@ -93,6 +100,7 @@ class JsonReport(Evaluator):
             }
             for f in _all_findings(attempts)
         ]
+        _write_parent(path)
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(data, fh, indent=2)
         log.info("wrote JSON: %s", path)

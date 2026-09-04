@@ -17,6 +17,7 @@ from .core import (
     PROBE_REGISTRY,
     Attempt,
     load_entry_points,
+    normalize_names,
 )
 from .generators.base import Generator
 from .log import get_verbosity, log
@@ -95,7 +96,7 @@ class Runner:
     ) -> None:
         load_entry_points()  # third-party plugins, idempotent
         self.generator = generator
-        self.detector_names = detectors or ["json-verdict"]
+        self.detector_names = normalize_names(detectors, ["json-verdict"])
         self.workers = workers
         self.log_file = log_file
         self.log_raw = log_raw
@@ -220,7 +221,7 @@ class Runner:
 
         detectors = [DETECTOR_REGISTRY.instantiate(n) for n in self.detector_names]
 
-        def work(attempt: Attempt) -> Attempt:
+        def work(attempt: Attempt, attempt_index: int) -> Attempt:
             try:
                 gen = self.generator.generate(attempt.system, attempt.prompt)
                 attempt.record(gen)
@@ -231,28 +232,29 @@ class Runner:
                 attempt.status = "internal_error"
                 attempt.verdict = "error"
                 attempt.detector_notes.append(f"internal error: {e}")
-            self._log(attempt, info)
+            self._log(attempt, info, attempt_index)
             return attempt
 
-        done: list[Attempt] = []
+        done: list[Attempt | None] = [None] * len(attempts)
         total = len(attempts)
         with ThreadPoolExecutor(max_workers=max(1, self.workers)) as pool:
-            futures = [pool.submit(work, a) for a in attempts]
-            for i, fut in enumerate(as_completed(futures), 1):
+            futures = {pool.submit(work, a, index): index for index, a in enumerate(attempts)}
+            for completed, fut in enumerate(as_completed(futures), 1):
+                attempt_index = futures[fut]
                 try:
                     a = fut.result()
                 except Exception:  # noqa: BLE001 — belt & braces around work()
-                    log.exception("worker future failed (%d/%d)", i, total)
+                    log.exception("worker future failed (%d/%d)", completed, total)
                     continue
-                done.append(a)
+                done[attempt_index] = a
                 loc = _format_location(a)
                 telem = _format_telemetry(a)
                 n_find = len(a.findings)
                 f_str = f"({n_find} finding{'s' if n_find != 1 else ''})"
                 if a.status == "ok":
-                    log.info("[%d/%d] %s → %s %s%s", i, total, loc, a.verdict, f_str, telem)
+                    log.info("[%d/%d] %s → %s %s%s", completed, total, loc, a.verdict, f_str, telem)
                 else:
-                    log.info("[%d/%d] %s → %s (%s)%s", i, total, loc, a.verdict or "?", a.status, telem)
+                    log.info("[%d/%d] %s → %s (%s)%s", completed, total, loc, a.verdict or "?", a.status, telem)
 
                 # Show explicit error message if generation or detector failed
                 if a.status != "ok":
@@ -277,7 +279,8 @@ class Runner:
                             summary_str = f": {exp}"
                         log.info("    ↳ [%s] %s%s%s%s", f.severity, f.cwe, sink_str, line_str, summary_str)
 
-        for a in done:
+        ordered = [a if a is not None else attempts[index] for index, a in enumerate(done)]
+        for a in ordered:
             info.ok += a.status == "ok"
             info.parse_errors += a.status == "parse_error"
             info.api_errors += a.status == "api_error"
@@ -290,7 +293,7 @@ class Runner:
                          "ok": info.ok, "parse_errors": info.parse_errors,
                          "api_errors": info.api_errors, "internal_errors": info.internal_errors,
                          "findings": info.findings, "wall_seconds": info.wall_seconds})
-        return done, info
+        return ordered, info
 
     def evaluate(self, attempts: list[Attempt], run_info: dict, evaluator_names: list[str]) -> None:
         """Run evaluators; run_info is passed through as-is (cli adds out paths)."""
@@ -306,7 +309,7 @@ class Runner:
             self._fh.write(json.dumps(record, default=str) + "\n")
             self._fh.flush()
 
-    def _log(self, attempt: Attempt, info: RunInfo) -> None:
+    def _log(self, attempt: Attempt, info: RunInfo, attempt_index: int | None = None) -> None:
         if not hasattr(self, "_fh") or self._fh is None:
             return
         rec = {
@@ -317,6 +320,7 @@ class Runner:
             "source": attempt.source,
             "context": attempt.context,
             "id": attempt.id,
+            "attempt_index": attempt_index,
             "status": attempt.status,
             "verdict": attempt.verdict,
             "findings": [dataclasses.asdict(f) for f in attempt.findings],

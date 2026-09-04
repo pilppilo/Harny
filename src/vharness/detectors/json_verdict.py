@@ -18,6 +18,10 @@ _CWE_RE = re.compile(r"(?:cwe[ -]*)?(\d{1,4})", re.IGNORECASE)
 
 
 def _normalize_cwe(raw) -> str | None:
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        return f"CWE-{raw}" if 0 < raw <= 9999 else None
     if not isinstance(raw, str):
         return None
     m = _CWE_RE.search(raw.strip())
@@ -28,6 +32,11 @@ def _normalize_severity(raw) -> str | None:
     if not isinstance(raw, str):
         return None
     return _SEVERITY_MAP.get(raw.strip().lower())
+
+
+def _optional_text(raw) -> str:
+    """Keep optional report fields textual; null and malformed values are empty."""
+    return raw.strip() if isinstance(raw, str) else ""
 
 
 @register_builtin
@@ -104,9 +113,9 @@ class JSONVerdict(Detector):
                 continue
             f = Finding(
                 cwe=cwe, severity=severity,
-                sink=str(v.get("sink", "")).strip(),
+                sink=_optional_text(v.get("sink")),
                 explanation=explanation.strip(),
-                patch=str(v.get("patch", "")).strip(),
+                patch=_optional_text(v.get("patch")),
                 file=attempt.context.get("file", attempt.source),
                 line=attempt.context.get("line", 0),
                 function=attempt.context.get("function", ""),
@@ -115,4 +124,9 @@ class JSONVerdict(Detector):
             if severity == "Medium" and _normalize_severity(v.get("severity")) is None:
                 attempt.detector_notes.append(f"vulnerability #{i} invalid severity; defaulted Medium")
 
-        attempt.verdict = "vulnerable" if (vulnerable or attempt.findings) else "clean"
+        if vulnerable and not attempt.findings:
+            attempt.status = "parse_error"
+            attempt.verdict = "unparseable"
+            attempt.detector_notes.append("vulnerability asserted but no valid findings were supplied")
+            return
+        attempt.verdict = "vulnerable" if attempt.findings else "clean"

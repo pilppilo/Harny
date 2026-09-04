@@ -2,9 +2,9 @@
 
 **Date:** 2026-09-03  
 **Slug:** `code-review-fixes`  
-**Status:** Approved for implementation  
-**Baseline:** 84 tests pass, but the defects below are not covered by the
-current suite.
+**Status:** Follow-up required — initial regression suite passes, second review found unresolved defects
+**Initial baseline:** 84 tests passed before the first repair pass; the first
+pass reached 113 tests, but the follow-up defects below remain unresolved.
 
 ## Objective
 
@@ -331,3 +331,226 @@ This hardening milestone is complete when:
 - reports and metrics are deterministic and evidence-bearing;
 - repeated Runner construction cannot duplicate plugin registration; and
 - generator telemetry remains exact under configured worker concurrency.
+
+## Follow-up review findings
+
+The first implementation pass reached 113 passing tests, but a second
+read-only review found the defects below. The milestone must remain open until
+these findings and their regression tests are complete.
+
+### 15. Plugin activation can leave partial registration behind
+
+**Confirmed behavior:** `load_entry_points()` does not mark a failing entry
+point as loaded, which permits a later retry. However, `register_plugins()` may
+successfully register one or more components before raising. Those registry
+mutations remain. A later retry can then fail with duplicate component names,
+leaving plugin availability dependent on the point of failure.
+
+**Required fix:** Make plugin activation transactional and synchronize the
+complete activation operation. Concurrent Runner construction must not race
+between the loaded-identity check, component registration, and loaded-identity
+commit. A preferred implementation stages registrations and commits them only
+after activation succeeds. If staging is not feasible with the current
+decorator API, acquire one activation lock, snapshot both registered items and
+cached instances before `ep.load()` (module import may itself run registration
+decorators), and restore them on failure. Preserve useful diagnostics naming
+the entry point and affected registry/component. Add the loaded identity only
+after the registration transaction commits.
+
+**Regression tests:** Cover an import failure, a `register_plugins()` failure
+before registration, a failure after one successful registration, a retry of
+each failure, class registration, duplicate-name diagnostics, and concurrent
+activation from multiple Runner constructions. Assert that failed activation
+leaves no new components or cached instances behind and successful activation
+occurs exactly once.
+
+### 16. Unexpected worker-future failures can return pending attempts
+
+**Confirmed behavior:** The completion loop falls back to the original
+attempt object when a worker future raises outside the normal generator or
+detector handler. That attempt may retain `status="pending"`. The run can then
+omit it from all terminal counters while describing the run as complete.
+
+**Required fix:** Every discovered attempt must reach exactly one terminal
+status. If a future raises, mark its original attempt `internal_error`, set an
+error verdict and diagnostic note, record its `attempt_index`, and include it
+in run counters. If durable attempt logging itself fails, surface a run-level
+failure rather than claiming a fully recorded successful run.
+
+**Regression tests:** Force an exception outside the inner work handler and
+assert stable returned order, no pending attempts, exact internal-error counts,
+complete unique indices, and appropriate run-level behavior when JSONL writing
+fails.
+
+### 17. String CWE parsing bypasses integer range validation
+
+**Confirmed behavior:** Integer CWE values are bounded, but strings are parsed
+with a substring regex. Values such as `"10000"`, `"0"`, and `"-1"` may be
+truncated or normalized into an invalid CWE. Unrelated text containing a short
+number may also be accepted.
+
+**Required fix:** Parse canonical, numeric, and supported descriptive string
+forms without truncation, then apply the same positive supported-range check
+used for integers. Numeric strings must be validated as complete numeric
+tokens. Descriptive compatibility must require an explicit CWE marker rather
+than an arbitrary number appearing in prose.
+
+**Regression tests:** Add string forms for zero, negative, five-or-more digit,
+leading/trailing text, unrelated numbered prose, canonical values, numeric
+values, and supported descriptive `CWE <id> description` values.
+
+### 18. Plugin listing does not discover installed entry points
+
+**Confirmed behavior:** `vharness list` prints the current registries without
+calling `load_entry_points()`. Installed third-party plugins therefore remain
+absent until another code path constructs a runner or otherwise loads entry
+points.
+
+**Required fix:** Perform contained, idempotent entry-point discovery before
+listing registries. A broken plugin must produce a diagnostic without hiding
+built-ins or preventing other plugins from appearing.
+
+**Regression tests:** Invoke `list` in a fresh process state with successful
+and failing fake entry points. Assert built-ins and successful third-party
+components appear exactly once and failures are diagnosed.
+
+### 19. Retried generations under-report locally recorded token usage
+
+**Confirmed behavior:** Generator statistics include tokens from a
+length-truncated response and its successful retry, but the returned
+`Generation` contains only the final response's tokens. Attempt JSONL records
+and `vharness usage` therefore undercount locally observed billable usage.
+
+**Required fix:** Accumulate prompt and completion tokens across every response
+received for one logical generation and store those totals in the returned
+`Generation`, including when a later retry ends in a terminal error. Preserve
+optional per-response telemetry when it becomes useful, but the attempt-level
+totals must represent all observed provider usage. Update `read_usage()` to
+count recorded tokens and latency independently from the logical success/error
+classification; its current early `continue` on `generation.error` would
+otherwise discard the newly preserved billable usage. Cache hits remain
+zero-token local responses.
+
+**Regression tests:** Cover immediate success, one and multiple length retries,
+terminal error after a billable response, cache hits, and concurrent mixed
+paths. Assert generator summary, `Generation`, JSONL, and `vharness usage`
+agree on totals.
+
+### 20. Name-list normalization silently drops malformed values
+
+**Confirmed behavior:** Programmatic sequences containing non-string values
+silently discard those values. A malformed selection such as
+`["json-verdict", 42]` appears valid rather than producing a configuration
+error.
+
+**Required fix:** Accept only a comma-separated string or a sequence containing
+strings. Trim strings and remove empty entries, but reject unsupported input
+types and non-string sequence members with a diagnostic identifying the field
+and invalid value. Continue applying explicit defaults only when the normalized
+selection is genuinely empty.
+
+**Regression tests:** Cover strings, tuples/lists, whitespace, empty elements,
+empty selections, integers, mappings, mixed sequences, unknown names, and
+defaults through both CLI and programmatic runner paths.
+
+### 21. Contradictory verdict flags and findings lack a defined policy
+
+**Confirmed behavior:** A response with `has_vulnerability=false` and one or
+more valid vulnerability objects becomes `verdict="vulnerable"` because valid
+findings take precedence implicitly. The contradiction is not reported.
+
+**Required fix:** Define and document precedence. For this repair, treat a
+false flag accompanied by valid findings as a parse/validation error with a
+diagnostic note; do not silently reinterpret the model's assertion. Preserve
+the invariant that an `ok` vulnerable verdict has at least one valid finding.
+
+**Regression tests:** Cover false plus valid findings, false plus invalid
+findings, true plus valid findings, true plus none, missing flag plus valid
+findings, and a valid clean response.
+
+### 22. Relative external output provenance is ambiguous
+
+**Confirmed behavior:** Project run metadata records an explicit relative
+output path exactly as supplied. Once the launch working directory is lost,
+`run.json` cannot identify the actual external output location.
+
+**Required fix:** Preserve the user-supplied value for reproducibility while
+also recording its absolute path resolved against the launch working
+directory. Record the launch working directory once in immutable inputs or
+provenance. Store structured output provenance containing at least `requested`,
+`resolved`, and `ownership`. Distinguish `project_default`,
+`explicit_project`, and `explicit_external`; an explicitly supplied path inside
+the project is not automatically external.
+
+**Regression tests:** Cover relative and absolute explicit paths for every
+report/log output, a launch working directory outside the project, project
+defaults, and metadata reconstruction after changing directories.
+
+### 23. Failed or unparseable attempts corrupt evaluation metrics
+
+**Confirmed behavior:** The confusion matrix scores every labeled attempt
+without checking its terminal status. A parse error on a clean sample is counted
+as a true negative, while an API or internal error on a vulnerable sample is
+counted as a false negative. These are unavailable predictions, not model
+security judgments. Stricter detector validation therefore changes precision,
+recall, and false-positive rates for the wrong reason.
+
+**Required fix:** Compute TP, FP, TN, FN, clean-sample false-positive rate, CWE
+accuracy, and per-CWE recall only from eligible predictions:
+
+```text
+status == "ok"
+verdict in {"clean", "vulnerable"}
+```
+
+Report coverage and unscored outcomes separately, including at least:
+
+```text
+labeled_total
+scored_total
+unscored_parse_error
+unscored_api_error
+unscored_internal_error
+coverage = scored_total / labeled_total
+```
+
+Do not convert transport, parser, or harness failures into clean predictions or
+model misses. Preserve per-sample status and diagnostic notes in metrics output.
+
+**Regression tests:** Cover clean and vulnerable samples for every `ok`
+verdict, plus parse, API, internal, and skipped statuses. Assert failed attempts
+do not enter the confusion matrix or per-CWE denominators, coverage is exact,
+and the human and JSON metric summaries expose the unscored counts.
+
+## Follow-up regression gaps from the first pass
+
+Before closing the milestone, add the originally required cases that remain
+missing or insufficiently isolated:
+
+- project-scoped generic runs with JSON, SARIF, Markdown, and metrics tested
+  independently;
+- explicit external output compatibility for every output type;
+- effective `scan` and `eval` metadata, including `--skip-corpus`;
+- unknown detector and evaluator validation;
+- nested relative and absolute output paths and replacement behavior;
+- retry, cache-hit, and terminal-error generator summaries;
+- deterministic per-sample metric/report ordering under reversed completion;
+- metrics eligibility and coverage for parse/API/internal/skipped attempts;
+- concurrent plugin activation and cached-instance rollback; and
+- retry token totals flowing through `Generation`, JSONL, and `read_usage()`.
+
+## Revised implementation order
+
+1. Add failing regression tests for findings 15–23 and the remaining gate
+   gaps above.
+2. Make plugin activation rollback-safe, synchronized, and available to
+   `vharness list`.
+3. Guarantee terminal attempt state for every worker outcome.
+4. Harden CWE parsing, name selection, and contradictory verdict validation.
+5. Make attempt-level usage totals include all observed retry responses.
+6. Exclude failed/unavailable predictions from security-quality metrics and
+   report coverage explicitly.
+7. Record unambiguous output provenance.
+8. Run focused tests, concurrency tests, and the complete suite.
+9. Change this document to `Implemented` only after every original and
+   follow-up completion criterion passes.

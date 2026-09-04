@@ -13,6 +13,7 @@ DEFAULT_EXCLUDES = {
     ".cache", ".venv", "venv", "target", ".idea", ".vscode",
 }
 MAX_FILE_BYTES = 1_000_000
+ROUTING_HEADER_BYTES = 4096
 
 # Boilerplate appended to every system prompt: the code under review is
 # untrusted data (prompt-injection resistance) and patches are advisory only.
@@ -103,7 +104,7 @@ class FileProbe(Probe):
                 continue
             # Route: only files this probe claims. Shebang-based probes (shell)
             # need the file head for extensionless routing.
-            if not self.matches(path, raw[:256]):
+            if not self.matches(path, raw[:ROUTING_HEADER_BYTES]):
                 continue
             try:
                 content = raw.decode("utf-8")
@@ -149,7 +150,7 @@ class FileProbe(Probe):
         """Routing predicate used by the multi-probe 'scan' preset."""
         try:
             with open(path, "rb") as fh:
-                head = fh.read(256)
+                head = fh.read(ROUTING_HEADER_BYTES)
         except OSError:
             return False
         return self.matches(path, head)

@@ -56,6 +56,7 @@ class OpenAICompatible(Generator):
         self._client = OpenAI(base_url=base_url, api_key=api_key, timeout=timeout)
         self._cache_path = cache_path
         self._cache_lock = threading.Lock()
+        self._stats_lock = threading.Lock()
         self._cache: sqlite3.Connection | None = None
         if cache_path:
             self._cache = sqlite3.connect(cache_path, check_same_thread=False)
@@ -98,7 +99,8 @@ class OpenAICompatible(Generator):
             self._cache.commit()
 
     def summary(self) -> str:
-        s = self.stats
+        with self._stats_lock:
+            s = {key: (list(value) if key == "latencies" else value) for key, value in self.stats.items()}
         lat = s["latencies"]
         p50 = sorted(lat)[len(lat) // 2] if lat else 0.0
         return (
@@ -110,10 +112,12 @@ class OpenAICompatible(Generator):
         key = self._cache_key(system, prompt)
         cached = self._cache_get(key)
         if cached is not None:
-            self.stats["cache_hits"] += 1
+            with self._stats_lock:
+                self.stats["cache_hits"] += 1
             return Generation(text=cached, model=self.model, cached=True)
 
-        self.stats["queries"] += 1
+        with self._stats_lock:
+            self.stats["queries"] += 1
         max_tokens = self.max_tokens
         # One extra attempt is reserved for length-truncated replies.
         total_attempts = self.max_retries + 2
@@ -141,7 +145,7 @@ class OpenAICompatible(Generator):
             usage = getattr(response, "usage", None)
             p_toks = (getattr(usage, "prompt_tokens", 0) or 0) if usage is not None else 0
             c_toks = (getattr(usage, "completion_tokens", 0) or 0) if usage is not None else 0
-            with self._cache_lock:
+            with self._stats_lock:
                 self.stats["latencies"].append(latency)
                 if usage is not None:
                     self.stats["prompt_tokens"] += p_toks
@@ -168,5 +172,6 @@ class OpenAICompatible(Generator):
                 completion_tokens=c_toks,
             )
 
-        self.stats["api_errors"] += 1
+        with self._stats_lock:
+            self.stats["api_errors"] += 1
         return Generation(text="", model=self.model, error=last_error)

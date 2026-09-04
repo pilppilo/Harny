@@ -25,6 +25,7 @@ VERSION = "0.2.0"
 # Plugin discovery group: packages declare
 # [project.entry-points."vharness.plugins"] my_thing = "pkg.mod:MyThing"
 ENTRY_POINT_GROUP = "vharness.plugins"
+_LOADED_ENTRY_POINTS: set[tuple[str, str, str]] = set()
 
 SEVERITIES = ("High", "Medium", "Low")
 LEVEL_MAP = {"High": "error", "Medium": "warning", "Low": "note"}
@@ -156,17 +157,22 @@ def load_entry_points() -> None:
     except ImportError:  # py<3.10
         return
     for ep in entry_points(group=ENTRY_POINT_GROUP):
+        identity = (getattr(ep, "group", ENTRY_POINT_GROUP), ep.name, ep.value)
+        if identity in _LOADED_ENTRY_POINTS:
+            continue
         try:
             obj = ep.load()
-        except Exception as e:  # noqa: BLE001 — a broken plugin shouldn't kill the app
-            log.warning("plugin %s failed to load: %s", ep.name, e)
+            if hasattr(obj, "register_plugins") and callable(obj.register_plugins):
+                obj.register_plugins()
+            else:
+                reg = getattr(obj, "registry", None)
+                if reg is None or not hasattr(reg, "register"):
+                    raise ValueError("entry point exposes neither register_plugins() nor a registry")
+                reg.register(obj)
+        except Exception as e:  # noqa: BLE001 — third-party plugin failures are contained
+            log.warning("plugin entry point %s (%s) failed to activate: %s", ep.name, ep.value, e)
             continue
-        if hasattr(obj, "register_plugins") and callable(obj.register_plugins):
-            obj.register_plugins()
-            continue
-        reg = getattr(obj, "registry", None)
-        if reg is not None and hasattr(reg, "register"):
-            reg.register(obj)
+        _LOADED_ENTRY_POINTS.add(identity)
 
 
 PROBE_REGISTRY: PluginRegistry = PluginRegistry("probe")
@@ -174,3 +180,19 @@ GENERATOR_REGISTRY: PluginRegistry = PluginRegistry("generator")
 DETECTOR_REGISTRY: PluginRegistry = PluginRegistry("detector")
 EVALUATOR_REGISTRY: PluginRegistry = PluginRegistry("evaluator")
 ALL_REGISTRIES = [PROBE_REGISTRY, GENERATOR_REGISTRY, DETECTOR_REGISTRY, EVALUATOR_REGISTRY]
+
+
+def normalize_names(value, default: list[str]) -> list[str]:
+    """Normalize a comma-delimited name string or a sequence of names.
+
+    Empty values use the caller-provided explicit default. Keeping this in core
+    ensures CLI and programmatic runner callers use the same contract.
+    """
+    if value is None:
+        return list(default)
+    values = value.split(",") if isinstance(value, str) else value
+    try:
+        names = [item.strip() for item in values if isinstance(item, str) and item.strip()]
+    except TypeError:
+        names = []
+    return names or list(default)

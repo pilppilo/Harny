@@ -109,6 +109,7 @@ class MetricsReport(Evaluator):
         out = run_info.get("metrics_out") or "eval_metrics.json"
         if run_info.get("out_dir") and not os.path.isabs(out):
             out = os.path.join(run_info["out_dir"], out)
+        os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
         with open(out, "w", encoding="utf-8") as fh:
             json.dump({"metrics": m, "per_sample": [
                 {

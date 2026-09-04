@@ -21,6 +21,8 @@ from .core import (
     EVALUATOR_REGISTRY,
     GENERATOR_REGISTRY,
     PROBE_REGISTRY,
+    load_entry_points,
+    normalize_names,
 )
 from .log import log, setup as log_setup
 from .runner import Runner
@@ -105,10 +107,16 @@ class _LazyGenerator:
     def generate(self, system: str, prompt: str):
         return self._get().generate(system, prompt)
 
+    def summary_if_initialized(self) -> str:
+        if self._inner is None:
+            return ""
+        summary = getattr(self._inner, "summary", None)
+        return summary() if callable(summary) else ""
+
 
 def _runner(args) -> Runner:
     generator = _LazyGenerator(args)
-    detectors = getattr(args, "detectors", None) or ["json-verdict"]
+    detectors = normalize_names(getattr(args, "_detector_names", None), ["json-verdict"])
     log_file = None if getattr(args, "no_log", False) else getattr(args, "log_file", None)
     try:
         skills = load_skills(getattr(args, "skill", None))
@@ -138,9 +146,19 @@ def _probe_kwargs(args, probe_names: list[str]) -> dict:
         kw["path"] = args.dataset
     if getattr(args, "limit", None):
         kw["limit"] = args.limit
-    if getattr(args, "skip_corpus", False):
-        probe_names[:] = [p for p in probe_names if p != "corpus"]
     return kw
+
+
+def _normalize_workflow(args) -> None:
+    """Resolve CLI selections once for execution and persisted provenance."""
+    probes = normalize_names(getattr(args, "probes", None), [])
+    if getattr(args, "skip_corpus", False):
+        probes = [name for name in probes if name != "corpus"]
+    if not probes:
+        raise CLIError("no probes selected")
+    args._probe_names = probes
+    args._detector_names = normalize_names(getattr(args, "detectors", None), ["json-verdict"])
+    args._evaluator_names = normalize_names(getattr(args, "evaluators", None), ["summary"])
 
 
 def _project_inputs(args, workflow: str) -> dict:
@@ -150,6 +168,10 @@ def _project_inputs(args, workflow: str) -> dict:
         "exclude", "generator", "model", "profile", "dry_run", "workers",
     )
     inputs = {field: getattr(args, field) for field in fields if getattr(args, field, None) is not None}
+    inputs["probes"] = list(args._probe_names)
+    inputs["detectors"] = list(args._detector_names)
+    inputs["evaluators"] = list(args._evaluator_names)
+    inputs["skip_corpus"] = bool(getattr(args, "skip_corpus", False))
     inputs["workflow"] = workflow
     return inputs
 
@@ -166,13 +188,17 @@ def _begin_project_run(args, workflow: str):
     except WorkspaceError as exc:
         raise CLIError(str(exc)) from exc
 
-    # Project mode owns only defaults. Explicit output paths remain untouched
-    # and are recorded below as external locations.
+    external_outputs = {
+        field: str(getattr(args, field))
+        for field in ("log_file", "out", "sarif_out", "markdown_out", "json_out", "metrics_out")
+        if getattr(args, field, None)
+    }
+    # Project mode owns only defaults. Explicit output paths remain untouched.
     if not getattr(args, "no_log", False) and not getattr(args, "log_file", None):
         args.log_file = str(run.events_path)
-    if workflow == "scan" and not getattr(args, "out", None):
+    if not getattr(args, "out", None):
         args.out = str(run.reports_dir / "report")
-    if workflow == "eval" and not getattr(args, "metrics_out", None):
+    if not getattr(args, "metrics_out", None):
         args.metrics_out = str(run.reports_dir / "eval_metrics.json")
 
     outputs = {"run_dir": str(run.path), "reports_dir": str(run.reports_dir)}
@@ -180,6 +206,8 @@ def _begin_project_run(args, workflow: str):
         value = getattr(args, field, None)
         if value:
             outputs[field] = str(value)
+    if external_outputs:
+        outputs["external_outputs"] = external_outputs
     try:
         update_run(run, status="running", outputs=outputs)
     except WorkspaceError as exc:  # pragma: no cover - filesystem failures are platform-specific
@@ -200,6 +228,7 @@ def _finish_project_run(run, code: int, *, stop_reason: str | None = None) -> No
 
 def cmd_run(args) -> int:
     workflow = getattr(args, "command", "run")
+    _normalize_workflow(args)
     if workflow == "run" and not getattr(args, "project", None):
         args.log_file = args.log_file or "scan_log.jsonl"
     project_run = _begin_project_run(args, workflow) if workflow in {"run", "scan", "eval"} else None
@@ -224,28 +253,35 @@ def cmd_run(args) -> int:
 
 
 def _cmd_run(args) -> int:
-    probe_names = [p.strip() for p in args.probes.split(",") if p.strip()]
+    load_entry_points()
+    probe_names = list(args._probe_names)
     for p in probe_names:
         try:
             PROBE_REGISTRY.get(p)
         except KeyError as e:
             raise CLIError(str(e)) from e
+    detector_names = list(args._detector_names)
+    for detector in detector_names:
+        try:
+            DETECTOR_REGISTRY.get(detector)
+        except KeyError as e:
+            raise CLIError(str(e)) from e
+    evaluator_names = list(args._evaluator_names)
+    for evaluator in evaluator_names:
+        try:
+            EVALUATOR_REGISTRY.get(evaluator)
+        except KeyError as e:
+            raise CLIError(str(e)) from e
     runner = _runner(args)
     probe_kwargs = _probe_kwargs(args, probe_names)
 
-    evaluators = [e.strip() for e in (args.evaluators or "").split(",") if e.strip()]
-    evaluator_names = evaluators or ["summary"]
     run_info_extra = {
         "out": getattr(args, "out", None),
         "sarif_out": getattr(args, "sarif_out", None),
         "markdown_out": getattr(args, "markdown_out", None),
         "json_out": getattr(args, "json_out", None),
         "metrics_out": getattr(args, "metrics_out", None),
-        "generator_summary": (
-            runner.generator.summary()
-            if not isinstance(runner.generator, _LazyGenerator)
-            else ""
-        ),
+        "generator_summary": "",
     }
 
     attempts, info = runner.run(
@@ -259,6 +295,12 @@ def _cmd_run(args) -> int:
         if len(attempts) > 50:
             log.info("  … and %d more", len(attempts) - 50)
         return 0
+
+    run_info_extra["generator_summary"] = (
+        runner.generator.summary_if_initialized()
+        if isinstance(runner.generator, _LazyGenerator)
+        else getattr(runner.generator, "summary", lambda: "")()
+    )
 
     import dataclasses
     run_info = dataclasses.asdict(info) | run_info_extra | {"run_info": info}

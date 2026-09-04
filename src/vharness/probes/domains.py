@@ -15,7 +15,7 @@ from ..analyzers import shell as _shell
 from ..analyzers import web as _web
 from ..core import PROBE_REGISTRY
 from .base import register_builtin
-from .scan import FileProbe
+from .scan import FileProbe, ROUTING_HEADER_BYTES
 
 
 @register_builtin
@@ -122,7 +122,7 @@ def route_file(path: str) -> str | None:
             continue
         try:
             with open(path, "rb") as fh:
-                head = fh.read(256)
+                head = fh.read(ROUTING_HEADER_BYTES)
         except OSError:
             return None
         if probe.matches(path, head):
