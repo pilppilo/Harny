@@ -18,15 +18,21 @@ and completion gate in this document pass.
 
 ## Priority and implementation boundary
 
-Complete the P1 correctness and provenance fixes first. P2 fixes may follow in
-the same hardening branch, but new dynamic-assessment feature work must not
-begin until all P1 items pass their regression tests.
+Complete the P1 correctness and provenance fixes first. The original priority
+headings below classify findings 1–14. The explicit follow-up priority map is:
+
+- **Follow-up P1:** findings 15, 16, 17, 19, 21, 22, and 23;
+- **Follow-up P2:** findings 18 and 20.
+
+P2 fixes may follow in the same hardening branch, but new dynamic-assessment
+feature work must not begin until both the original P1 items and all follow-up
+P1 items pass their regression tests.
 
 The changes must preserve existing standalone behavior for `run`, `scan`,
 `eval`, and `replay`, except where this specification explicitly corrects
 incorrect output placement, ordering, parsing, or telemetry.
 
-## P1 — correctness and provenance
+## Original P1 — correctness and provenance (findings 1–7)
 
 ### 1. Project-scoped generic-run outputs escape the run directory
 
@@ -44,12 +50,14 @@ log_file    = <run>/events.jsonl
 ```
 
 SARIF, Markdown, and JSON derive their filenames from `out`; metrics uses
-`metrics_out`. Explicit user-provided output paths remain untouched and are
-recorded as external output locations.
+`metrics_out`. Explicit user-provided output paths remain untouched. Record
+structured output provenance for them as specified in finding 22, including
+whether each resolves to `explicit_project` or `explicit_external`.
 
 **Regression tests:** Exercise generic project runs with each file-writing
 evaluator and assert that no default report appears in the working directory.
-Also verify that explicit external paths remain supported.
+Also verify that explicit project-local and external paths remain supported
+and receive the correct ownership classification.
 
 ### 2. Project launch inputs omit effective workflow configuration
 
@@ -170,7 +178,7 @@ entry point and registry rather than an unrelated runner failure.
 cover class registration, `register_plugins()`, import failure, activation
 failure, and duplicate-name diagnostics.
 
-## P2 — robustness, determinism, and telemetry
+## Original P2 — robustness, determinism, and telemetry (findings 8–14)
 
 ### 8. Integer CWE values are discarded
 
@@ -520,7 +528,7 @@ status == "ok"
 verdict in {"clean", "vulnerable"}
 ```
 
-Report coverage and unscored outcomes separately, including at least:
+Report coverage and unscored outcomes using this complete schema:
 
 ```text
 labeled_total
@@ -533,8 +541,13 @@ unscored_other
 coverage = scored_total / labeled_total
 ```
 
-`unscored_other` includes unknown or missing statuses and `status="ok"` with an
-unsupported verdict. The following accounting identity is mandatory:
+These counters are disjoint and exhaustive over labeled attempts: every
+labeled attempt contributes to exactly one of `scored_total` or the five
+`unscored_*` counters. The named error and skipped counters classify their
+corresponding terminal statuses. `unscored_other` includes all remaining
+unavailable predictions, including unknown or missing statuses and
+`status="ok"` with an unsupported verdict. The counts must sum exactly to
+`labeled_total` according to this mandatory accounting identity:
 
 ```text
 labeled_total == scored_total
@@ -545,8 +558,9 @@ labeled_total == scored_total
                  + unscored_other
 ```
 
-Define `coverage` as `0.0` when `labeled_total == 0`. Preserve the existing
-`labeled` field as a compatibility alias for `labeled_total`. Do not convert
+Define `coverage` as `scored_total / labeled_total`, or `0.0` when
+`labeled_total == 0`. Preserve the existing `labeled` field as a compatibility
+alias whose value is exactly `labeled_total`. Do not convert
 transport, parser, or harness failures into clean predictions or model misses.
 `clean_total`, TP/FP/TN/FN, CWE accuracy, and per-CWE denominators must use only
 eligible scored predictions. Preserve every labeled sample, its status, and
@@ -555,7 +569,9 @@ diagnostic notes in per-sample metrics output.
 **Regression tests:** Cover clean and vulnerable samples for every `ok`
 verdict, plus parse, API, internal, and skipped statuses. Assert failed attempts
 do not enter the confusion matrix or per-CWE denominators, coverage is exact,
-and the human and JSON metric summaries expose the unscored counts.
+empty-set coverage is `0.0`, the disjoint counters sum exactly to
+`labeled_total`, `labeled == labeled_total`, and the human and JSON metric
+summaries expose the complete schema.
 
 ## Follow-up regression gaps from the first pass
 
