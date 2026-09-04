@@ -309,7 +309,10 @@ Run the complete existing test suite after the focused regression tests. No
 existing SAST, replay, project, metrics, or standalone-output behavior may
 regress except where this document explicitly changes incorrect behavior.
 
-## Implementation order
+## Historical implementation order (superseded)
+
+This was the first-pass order for findings 1–14. The revised implementation
+order at the end of this document is authoritative and supersedes this section.
 
 1. Add failing regression tests for P1 items 1–7.
 2. Implement normalized CLI/workflow inputs and project output routing.
@@ -324,7 +327,8 @@ regress except where this document explicitly changes incorrect behavior.
 
 This hardening milestone is complete when:
 
-- all fourteen defects have focused regression coverage;
+- all 23 documented defects and all listed regression gaps have focused
+  coverage;
 - the complete test suite passes;
 - project-scoped runs leave no unrequested default outputs in the working
   directory;
@@ -338,6 +342,11 @@ The first implementation pass reached 113 passing tests, but a second
 read-only review found the defects below. The milestone must remain open until
 these findings and their regression tests are complete.
 
+Follow-up priorities are:
+
+- **P1:** findings 15, 16, 17, 19, 21, 22, and 23;
+- **P2:** findings 18 and 20.
+
 ### 15. Plugin activation can leave partial registration behind
 
 **Confirmed behavior:** `load_entry_points()` does not mark a failing entry
@@ -347,15 +356,18 @@ mutations remain. A later retry can then fail with duplicate component names,
 leaving plugin availability dependent on the point of failure.
 
 **Required fix:** Make plugin activation transactional and synchronize the
-complete activation operation. Concurrent Runner construction must not race
-between the loaded-identity check, component registration, and loaded-identity
-commit. A preferred implementation stages registrations and commits them only
-after activation succeeds. If staging is not feasible with the current
-decorator API, acquire one activation lock, snapshot both registered items and
-cached instances before `ep.load()` (module import may itself run registration
-decorators), and restore them on failure. Preserve useful diagnostics naming
-the entry point and affected registry/component. Add the loaded identity only
-after the registration transaction commits.
+complete activation operation. Use one re-entrant shared lock covering the
+loaded-identity check, entry-point import/activation, every registry mutation,
+instance-cache mutation, rollback, and loaded-identity commit. The lock must be
+re-entrant because decorator-triggered registration can occur during
+`ep.load()`. Concurrent Runner construction and direct registry mutation must
+not race with activation or rollback. A preferred implementation stages
+registrations and commits them only after activation succeeds. If staging is
+not feasible with the current decorator API, snapshot both registered items
+and cached instances before `ep.load()` and restore them on failure while the
+same lock remains held. Preserve useful diagnostics naming the entry point and
+affected registry/component. Add the loaded identity only after the
+registration transaction commits.
 
 **Regression tests:** Cover an import failure, a `register_plugins()` failure
 before registration, a failure after one successful registration, a retry of
@@ -390,7 +402,7 @@ truncated or normalized into an invalid CWE. Unrelated text containing a short
 number may also be accepted.
 
 **Required fix:** Parse canonical, numeric, and supported descriptive string
-forms without truncation, then apply the same positive supported-range check
+forms without truncation, then apply the same supported range of `1..9999`
 used for integers. Numeric strings must be validated as complete numeric
 tokens. Descriptive compatibility must require an explicit CWE marker rather
 than an arbitrary number appearing in prose.
@@ -459,10 +471,12 @@ defaults through both CLI and programmatic runner paths.
 more valid vulnerability objects becomes `verdict="vulnerable"` because valid
 findings take precedence implicitly. The contradiction is not reported.
 
-**Required fix:** Define and document precedence. For this repair, treat a
-false flag accompanied by valid findings as a parse/validation error with a
-diagnostic note; do not silently reinterpret the model's assertion. Preserve
-the invariant that an `ok` vulnerable verdict has at least one valid finding.
+**Required fix:** Define and document precedence. When
+`has_vulnerability=false`, `vulnerabilities` must be absent or exactly an empty
+list. Any nonempty list is a parse/validation error, including a list whose
+entries are all malformed, and any non-list value is also a parse/validation
+error. Do not silently reinterpret the model's assertion. Preserve the
+invariant that an `ok` vulnerable verdict has at least one valid finding.
 
 **Regression tests:** Cover false plus valid findings, false plus invalid
 findings, true plus valid findings, true plus none, missing flag plus valid
@@ -477,10 +491,13 @@ output path exactly as supplied. Once the launch working directory is lost,
 **Required fix:** Preserve the user-supplied value for reproducibility while
 also recording its absolute path resolved against the launch working
 directory. Record the launch working directory once in immutable inputs or
-provenance. Store structured output provenance containing at least `requested`,
-`resolved`, and `ownership`. Distinguish `project_default`,
+provenance. Canonicalize existing symlink parents before ownership
+classification. Store structured output provenance containing at least
+`requested`, `resolved`, and `ownership`. Distinguish `project_default`,
 `explicit_project`, and `explicit_external`; an explicitly supplied path inside
-the project is not automatically external.
+the project is not automatically external. A lexically project-local path that
+resolves outside the project is `explicit_external`, while a lexically external
+path that resolves inside the project is `explicit_project`.
 
 **Regression tests:** Cover relative and absolute explicit paths for every
 report/log output, a launch working directory outside the project, project
@@ -511,11 +528,29 @@ scored_total
 unscored_parse_error
 unscored_api_error
 unscored_internal_error
+unscored_skipped
+unscored_other
 coverage = scored_total / labeled_total
 ```
 
-Do not convert transport, parser, or harness failures into clean predictions or
-model misses. Preserve per-sample status and diagnostic notes in metrics output.
+`unscored_other` includes unknown or missing statuses and `status="ok"` with an
+unsupported verdict. The following accounting identity is mandatory:
+
+```text
+labeled_total == scored_total
+                 + unscored_parse_error
+                 + unscored_api_error
+                 + unscored_internal_error
+                 + unscored_skipped
+                 + unscored_other
+```
+
+Define `coverage` as `0.0` when `labeled_total == 0`. Preserve the existing
+`labeled` field as a compatibility alias for `labeled_total`. Do not convert
+transport, parser, or harness failures into clean predictions or model misses.
+`clean_total`, TP/FP/TN/FN, CWE accuracy, and per-CWE denominators must use only
+eligible scored predictions. Preserve every labeled sample, its status, and
+diagnostic notes in per-sample metrics output.
 
 **Regression tests:** Cover clean and vulnerable samples for every `ok`
 verdict, plus parse, API, internal, and skipped statuses. Assert failed attempts
@@ -540,6 +575,8 @@ missing or insufficiently isolated:
 - retry token totals flowing through `Generation`, JSONL, and `read_usage()`.
 
 ## Revised implementation order
+
+This order is authoritative and supersedes the historical first-pass order.
 
 1. Add failing regression tests for findings 15–23 and the remaining gate
    gaps above.
