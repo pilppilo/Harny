@@ -44,9 +44,9 @@ None.
 
 | Order | ID | Status | Depends on | Outcome |
 | --- | --- | --- | --- | --- |
-| 1 | PHASE-0001 | ready | ARCH-0001, ROAD-0001, BENCH-0001, ADR-0001..0004 | Resumable session kernel and external contracts |
-| 2 | PHASE-0002 | accepted | PHASE-0001 | General agent loop, memory, context, and live human interaction |
-| 3 | PHASE-0003 | accepted | PHASE-0002 | Supervision, recovery, and candidate lineage |
+| 1 | PHASE-0001 | ready | ARCH-0001, ROAD-0001, BENCH-0001, ADR-0001..0004 | Resumable session kernel, attempt history, committed lineage, and external contracts |
+| 2 | PHASE-0002 | accepted | PHASE-0001 | Autonomous variation loop, memory, context, and live human interaction |
+| 3 | PHASE-0003 | accepted | PHASE-0002 | Evidence-selected supervision and recovery |
 | 4 | PHASE-0004 | accepted | PHASE-0003 | Cross-domain evidence from unchanged agent machinery |
 
 ## Benchmark contracts

@@ -15,10 +15,11 @@ related: [ARCH-0001, BENCH-0001, WORK-0001]
 
 ## Observable outcome
 
-Vharness detects seeded non-progress from journal evidence, requests bounded
-advisory supervision, performs a discriminating replan/variation, and records
-whether the intervention improved the external result. Candidate and trajectory
-history survive failure and remain attributable.
+Vharness detects seeded non-progress from journal and committed-lineage evidence,
+requests bounded advisory supervision, performs a discriminating replan or new
+variation attempt, and records whether the intervention improved the external
+result. Attempt history and committed lineage survive failure and remain
+attributable.
 
 ## Entrance criteria
 
@@ -33,33 +34,38 @@ fixtures; otherwise the phase limits itself to the ARCH-0001 defaults.
 - Advisory supervisor requests and typed `Guidance` results without tools.
 - Main-agent accept/reject/replan handling with recorded concise reasons.
 - Escalation from guidance to checkpoint/replan to operator question.
-- Optional candidate and trajectory lineage with parentage and external evidence.
+- Supervisor access to a bounded digest of attempts, committed objective vectors,
+  failures, and still-unexplored directions.
+- Lineage-informed variation direction and external comparison using the
+  PHASE-0001 single-lineage contracts.
 - Recovery drills spanning model, supervisor, runtime, evaluator, and process
   failures.
 
 ## Out of scope
 
-Supervisor tool use, recursive agent spawning, broad search-tree algorithms,
-learned threshold models, silent autonomous rollback of external state, or
-domain-specific recovery policies.
+Supervisor tool use, recursive agent spawning, population/archive management,
+branching or broad search-tree algorithms, learned threshold models, silent
+autonomous rollback of external state, or domain-specific recovery policies.
 
 ## Contracts added or changed
 
-Implement `Guidance`, `ProgressSignal`, and `LineageNode` from ARCH-0001. Add
-monitor and supervisor versions to run manifests. External receipts and scores
-remain the evidence; lineage disposition is a Vharness planning decision, not a
-replacement evaluation.
+Implement `Guidance` and `ProgressSignal` from ARCH-0001. Reuse `Attempt` and
+`CommittedNode` without changing their external acceptance semantics. Add monitor
+and supervisor policy versions to run manifests. External receipts and scores
+remain the evidence; Vharness does not replace evaluation.
 
 ## Implementation sequence
 
-1. Derive progress signals from existing event fixtures and expose diagnostics.
-2. Implement default triggers, hysteresis, cooldown, and deterministic fakes.
-3. Add bounded supervisor context and typed guidance with no execution access.
-4. Connect main-agent response and operator-visible escalation.
-5. Add minimal lineage projection and one-change-at-a-time variation records.
-6. Run seeded loop, regression, crash, and recovery scenarios.
-7. Create EXP documents only for threshold or algorithm changes justified by
-   observed false positives, false negatives, or benchmark cost.
+1. Derive progress signals from existing event/lineage fixtures and expose
+   diagnostics, distinguishing repeated cycles from productive plateaus.
+2. Create an EXP document to select initial trigger windows, thresholds,
+   normalization, hysteresis, and cooldown from labeled traces.
+3. Implement the selected policy and deterministic fakes.
+4. Add bounded supervisor context and typed guidance with no execution access.
+5. Connect main-agent response, new-attempt creation, and operator escalation.
+6. Run seeded loop, plateau, regression, crash, and recovery scenarios.
+7. Use later EXP documents for material algorithm changes justified by observed
+   false positives, false negatives, or benchmark cost.
 
 ## Compatibility and migration
 
@@ -69,11 +75,12 @@ global to a run and never selected by benchmark identity.
 
 ## Test strategy
 
-Label seeded productive, stalled, repetitive, and regressing traces. Assert
-trigger timing, cooldown, escalation, and no trigger on clear progress. Compare
+Label seeded productive, plateaued-but-exploring, stalled, repetitive, and
+regressing traces. Assert trigger timing, cooldown, escalation, no trigger on
+clear progress, and bounded intervention on productive plateaus. Compare
 supervised and unsupervised paired runs by task/seed. Inject failure at every
-guidance and lineage transition and assert replay equivalence and no duplicate
-external effect.
+guidance, attempt, and commit transition and assert replay equivalence and no
+duplicate external effect.
 
 ## Exit criteria and required evidence
 
@@ -82,7 +89,8 @@ external effect.
 - Guidance has no execution capability and all use is causally recorded.
 - At least one paired trial demonstrates recovery with bounded extra cost; any
   regressions and rejected guidance remain visible.
-- Candidate/trajectory parentage, changes, evaluations, and disposition replay.
+- Attempt history, committed parentage, changes, evaluations, and dispositions
+  replay without failed attempts entering committed lineage.
 - Repeated failed recovery escalates to the operator rather than looping forever.
 - BENCH-0001 evidence is linked from WORK-0001.
 
@@ -92,4 +100,3 @@ An overeager supervisor can become a second noisy planner. Keep deterministic
 triggers and cooldown authoritative, supervisor output advisory, and disable the
 capability globally if paired evidence shows net harm while retaining traces for
 a focused experiment.
-

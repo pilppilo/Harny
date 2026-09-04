@@ -27,9 +27,11 @@ evaluation change.
 Vharness Next will use AVO as architectural inspiration, not attempt a
 line-for-line reproduction. One general agent kernel will own the durable
 reasoning loop, memory, context construction, feedback interpretation,
-supervision, recovery, and optional candidate lineage. Environments provide
-typed observations, action descriptions, execution receipts, and evaluation
-receipts without changing that kernel.
+supervision, recovery, attempt history, and a single lineage of externally
+accepted states. Within an attempt the agent controls when to consult prior
+commits and knowledge, act, debug, and evaluate. Environments provide typed
+observations, action descriptions, execution receipts, state references, and
+evaluation receipts without changing that kernel.
 
 ## Consequences
 
@@ -49,4 +51,3 @@ the redesign.
 
 - NVIDIA AVO paper: <https://arxiv.org/html/2603.24517v1>
 - NVIDIA AVO overview: <https://developer.nvidia.com/blog/nvidia-avo-reaches-100-on-arc-agi-3-demonstrating-a-frontier-level-general-purpose-architecture-for-long-horizon-autonomous-agents/>
-

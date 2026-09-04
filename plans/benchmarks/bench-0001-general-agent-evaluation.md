@@ -61,7 +61,9 @@ minimum:
 - model and supervisor calls, input/output tokens, retries, and invalid outputs;
 - operator messages and controls, classified as requested, corrective, or abort;
 - evaluations, checkpoints, resumes, recovery reconciliations, and unresolved
-  indeterminate proposals.
+  indeterminate proposals;
+- variation directions, attempts, externally accepted commits, and unsuccessful
+  closures, with each evaluation correlated to its attempt and baseline.
 
 Environment-native efficiency measures remain authoritative. Vharness counters
 are diagnostic and must reconcile to retained external receipts.
@@ -96,8 +98,11 @@ Report external completion and native metrics without reinterpretation, plus:
 
 - completed tasks/runs and completion rate;
 - best and final external score where the authority supplies both;
+- externally supplied hard-constraint results and objective vectors for every
+  evaluated attempt, preserving incomparable results rather than scalarizing them;
 - evidence or artifact references for terminal results;
-- regression from a previously best candidate or trajectory;
+- regression from a previously best externally evaluated state or trajectory;
+- attempted versus committed versions and the committed single-lineage sequence;
 - autonomous, human-assisted, and operator-aborted outcomes separately;
 - recovery correctness after injected process interruption.
 
@@ -110,9 +115,16 @@ tasks report their external test/evaluator result.
 
 For every run record wall time; model latency and tokens; external actions;
 supervisor calls; context selection time and utilization; bytes/artifacts read;
-journal size; retry counts; repeated-action/failure signals; and human
-interventions. Report progress per external action, per model call, per million
-tokens, and per wall-clock hour where meaningful.
+journal size; retry counts; repeated-action/failure signals; attempted directions;
+attempts; evaluations; accepted commits; time, actions, evaluations, and tokens
+between commits; correctness rejection rate; and human interventions. Report
+progress per external action, per model call, per million tokens, and per
+wall-clock hour where meaningful.
+
+Report the attempt-to-commit ratio and distribution rather than treating every
+failed attempt as wasted work. AVO's published trajectory retained 40 committed
+versions from more than 500 explored directions; unsuccessful work is necessary
+search evidence even though it is excluded from committed lineage.
 
 Reliability includes malformed model result rate, uncorrelated receipt count,
 resume success, duplicate-effect count, projection replay agreement, supervisor
@@ -153,7 +165,7 @@ Phase verification uses this progression:
 A comparison is invalid when it changes the agent core or hidden prompt by
 environment, uses different model capability without reporting it, leaks prior
 task solutions, replaces external scores with local approximations, omits human
-help, cannot correlate actions to receipts, cherry-picks seeds, or silently
+help, cannot correlate actions/evaluations/commits to attempts and baselines,
+counts a rejected attempt as committed progress, cherry-picks seeds, or silently
 changes versions/budgets. Invalid runs remain useful diagnostics but cannot
 support a product capability claim.
-

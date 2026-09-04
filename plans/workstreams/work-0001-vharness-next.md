@@ -61,3 +61,25 @@ Copy unresolved items forward until resolved or explicitly dropped.
 - **Open questions:** None.
 - **Suggested next action:** Review and commit the planning snapshot, then begin
   PHASE-0001 in a fresh implementation task using WORK-0001 for handoff notes.
+
+## 2026-09-04 21:20 UTC — AVO paper alignment review
+
+- **Goal:** Re-read the complete AVO paper, including equations and figures, and
+  tighten the beginning phases before implementation.
+- **Work completed:** Made multi-action attempts, externally accepted commits,
+  and a single committed lineage foundational in PHASE-0001; gave the PHASE-0002
+  agent explicit control over lineage, knowledge, action, debugging, and
+  evaluation; moved supervisor threshold selection to a PHASE-0003 experiment;
+  aligned the architecture, decision, roadmap, benchmark, index, and schematic.
+- **Evidence:** Visually reviewed all 12 PDF pages, Figures 1-7, Table 1, and
+  Equations 1-4. Plant check returned `{"errors": [], "ok": true}` and
+  `git diff --check` returned no errors after the edits.
+- **Discoveries:** Sections 3.1-3.3 define AVO as
+  `Vary(P_t) = Agent(P_t, K, f)`: the agent controls a many-action variation
+  step, unsuccessful work remains outside committed lineage, and the evaluated
+  implementation is single-lineage. The paper does not publish context/memory
+  algorithms or numeric supervisor triggers.
+- **Open questions:** None blocks PHASE-0001. Plant has advanced beyond the
+  pinned `712f419` snapshot; updating Plant is independent of these plan edits.
+- **Suggested next action:** Re-run conformance checks and commit this focused
+  plan tightening before PHASE-0001 implementation.

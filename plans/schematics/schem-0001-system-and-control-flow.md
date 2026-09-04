@@ -30,7 +30,9 @@ flowchart TB
     Journal --> Monitor[Progress monitor]
     Monitor -->|trigger and bounded digest| Supervisor[Advisory supervisor]
     Supervisor -->|guidance event; no tools| Coordinator
-    Journal --> Lineage[Candidate and trajectory lineage]
+    Journal --> Attempts[All variation attempts]
+    Journal --> Lineage[Externally accepted single lineage]
+    Attempts -->|externally accepted evaluation only| Lineage
 
     Coordinator -->|ActionProposal| Runtime[External controlled runtime]
     Runtime -->|ExecutionReceipt| Coordinator
@@ -64,7 +66,7 @@ stateDiagram-v2
 
 ## Notes and unresolved branches
 
-The initial coordinator has one event writer and at most one unresolved
-state-changing proposal per session. Candidate lineage is used only when the
-task has meaningful alternatives. No unresolved branch blocks PHASE-0001.
-
+The initial coordinator has one event writer, at most one unresolved
+state-changing proposal per session, and one committed lineage. An attempt may
+span many actions; only external acceptance advances lineage. Population/archive
+branching is deferred. No unresolved branch blocks PHASE-0001.

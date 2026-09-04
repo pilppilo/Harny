@@ -46,9 +46,9 @@ component is presumed reusable until PHASE-0001 maps it to an accepted contract.
 
 | Order | Phase | Dependencies | Observable outcome |
 | --- | --- | --- | --- |
-| 1 | PHASE-0001 | Accepted architecture, decisions, roadmap, benchmark | A session can propose, receive, journal, pause, resume, and reconcile actions without executing them internally |
-| 2 | PHASE-0002 | PHASE-0001 verified | The agent completes bounded tasks with deterministic context, durable memory, and live operator steering |
-| 3 | PHASE-0003 | PHASE-0002 verified | The system detects stagnation, obtains advisory supervision, recovers, and preserves candidate/trajectory lineage |
+| 1 | PHASE-0001 | Accepted architecture, decisions, roadmap, benchmark | A session preserves multi-action attempts and advances a single committed lineage only from external acceptance while remaining resumable |
+| 2 | PHASE-0002 | PHASE-0001 verified | The agent autonomously consults lineage and knowledge, acts, debugs, and evaluates within bounded attempts using deterministic context and live operator steering |
+| 3 | PHASE-0003 | PHASE-0002 verified | The system distinguishes productive plateaus from stagnation, obtains advisory supervision, and recovers through attributable new attempts |
 | 4 | PHASE-0004 | PHASE-0003 verified | External benchmark evidence shows the unchanged core working across all target environment families |
 
 ## Cross-phase invariants
@@ -58,15 +58,18 @@ component is presumed reusable until PHASE-0001 maps it to an accepted contract.
 - External systems remain authoritative for lifecycle and evaluation.
 - The human operator is represented in durable state and current context.
 - Environment adapters contain serialization and protocol mechanics only.
+- Unsuccessful attempts remain durable history but never enter committed lineage.
 - Every externally visible action and receipt has a stable correlation ID.
 - A process crash cannot cause blind replay of an indeterminate action.
 
 ## Benchmark progression
 
-PHASE-0001 uses contract conformance and crash/replay tests. PHASE-0002 adds
-small deterministic Gymnasium and software fixtures. PHASE-0003 adds seeded
-stagnation and recovery trials. PHASE-0004 runs the externally owned suites in
-BENCH-0001 and publishes raw receipts plus aggregate results.
+PHASE-0001 uses contract, attempt/commit, and crash/replay tests. PHASE-0002 adds
+small deterministic Gymnasium and software fixtures plus agent-directed access
+to lineage, knowledge, and evaluation. PHASE-0003 experimentally selects
+supervision policy and adds seeded plateau, stagnation, and recovery trials.
+PHASE-0004 runs the externally owned suites in BENCH-0001 and publishes raw
+receipts plus aggregate results.
 
 ## Compatibility and migration strategy
 
@@ -91,4 +94,3 @@ The redesign is complete when every phase is verified, the same core passes
 BENCH-0001's generality gate, sessions resume after injected failures without
 duplicate effects, the operator can inspect and steer live work, and the
 external runtime/evaluator boundary is demonstrated rather than assumed.
-

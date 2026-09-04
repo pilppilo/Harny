@@ -66,6 +66,11 @@ does not claim fidelity to unpublished implementation details.
    provenance-preserving import.
 10. Hidden chain-of-thought is neither required nor persisted. Stored reasoning
     is limited to concise decisions, hypotheses, evidence, and action summaries.
+11. A variation attempt may contain many planning, inspection, implementation,
+    debugging, and evaluation actions. Those are agent-chosen activities, not a
+    coordinator-enforced pipeline.
+12. Unsuccessful attempts remain in trajectory history but never enter the
+    committed lineage. A commit requires an externally accepted evaluation.
 
 ## Components and responsibilities
 
@@ -80,9 +85,11 @@ the first implementation; UI and receipt readers submit messages to its queue.
 
 Runs the domain-neutral decide/act/observe loop. Given a `TaskSpec`, selected
 context, an environment contract, budgets, and current controls, it returns one
-typed result: an action proposal, a memory update, an evaluation request, a
-question to the operator, a wait, or a completion proposal. It never invokes a
-tool directly.
+typed result: an action proposal, a lineage or knowledge query, a memory update,
+an evaluation request, a question to the operator, a wait, or a completion
+proposal. It autonomously chooses when to inspect prior committed states,
+consult knowledge, modify work, debug, or evaluate. It never invokes a tool
+directly.
 
 ### Context assembler
 
@@ -94,7 +101,7 @@ can be reconstructed and selection quality can be measured.
 
 The journal stores immutable events. Projections expose working state,
 episodes, knowledge, hypotheses, failures, operator direction, budgets, and
-candidate/trajectory lineage. Projection code is versioned and replay-tested.
+attempt/committed-lineage views. Projection code is versioned and replay-tested.
 
 ### Environment connection
 
@@ -118,12 +125,20 @@ It converts operator input into typed events and confirms their application.
 The first surface may be the existing CLI/TUI; the durable contract, not the
 presentation layer, is architectural.
 
-### Candidate and trajectory lineage
+### Attempts and committed lineage
 
-Tracks parentage, changes, evidence, and disposition when work has alternatives.
-Code and optimization tasks may have explicit artifact candidates; ARC, Gym,
-and assessment sessions may instead track trajectory branches and checkpoints.
-The agent decides whether branching is useful; it is not imposed on every task.
+Tracks the AVO distinction between internal search and committed progress. An
+attempt starts from a committed state and may span many actions and evaluations.
+Its events always remain in the journal, but a successor joins the lineage only
+after the external evaluator accepts it. The initial implementation maintains
+one active lineage, matching the paper; population archives and branching wait
+for evidence that they are needed.
+
+Environments expose mechanical state semantics. Candidate-capable environments
+may supply opaque restorable state references. Irreversible or externally owned
+environments supply trajectory cursors instead; a committed milestone records
+externally supported progress and never implies that Vharness can roll back,
+reset, or control the environment.
 
 ## Public contracts
 
@@ -134,16 +149,20 @@ required fields are validated, and schema versions are explicit.
 
 | Contract | Required meaning |
 | --- | --- |
-| `TaskSpec` | `task_id`, objective, success evidence requested, budgets, environment identity, initial observation references |
+| `TaskSpec` | `task_id`, objective, success evidence requested, budgets, environment identity, initial observation references, knowledge-source references, and evaluation-contract reference |
 | `ActionSpace` | Named actions with argument schemas and environment-provided descriptions |
+| `EvaluationContract` | External evaluator identity; hard-constraint and objective names; objective directions; native comparison/acceptance semantics; and version |
 | `Observation` | Source, sequence/cursor, typed content or artifact references, and external timestamp/metadata |
 | `ActionProposal` | Proposal ID, session ID, action name, validated arguments, expected observable outcome, concise rationale, and context event cursor |
 | `ExecutionReceipt` | Proposal ID, external operation ID if any, status, outputs/artifact references, error, timing, and raw receipt reference |
-| `EvaluationReceipt` | External evaluator identity, task/run identity, completion state, metrics, evidence references, and raw receipt reference |
+| `KnowledgeSource` | Source ID, description, version/provenance, access reference, and content type for agent-directed consultation |
+| `StateRef` | Opaque external or workspace state identity, content digest when available, and whether the external system declares it restorable |
+| `Attempt` | Attempt ID, base committed-node ID, starting state reference, event range, status, and resulting state/evaluation references |
+| `EvaluationReceipt` | External evaluator identity; evaluated state and baseline IDs; hard constraint results; objective vector; improved/equivalent/regressed/incomparable comparison; external acceptance; evidence; and raw receipt reference |
 | `OperatorCommand` | Command ID and one of message, steer, pause, resume, stop, checkpoint, or request-evaluation with optional reason |
 | `Guidance` | Trigger evidence, supervisor diagnosis, constraints, suggested experiments, and expiry/cooldown |
 | `Checkpoint` | Journal cursor, projection versions/hashes, pending proposal IDs, budgets, and active controls |
-| `LineageNode` | Node ID, parent IDs, artifact or trajectory reference, change summary, evidence, and active/retained/rejected state |
+| `CommittedNode` | Node ID, single parent ID, accepted state reference, change summary, evaluation receipt ID, objective vector, and commit time |
 
 Execution receipt status is one of `accepted`, `rejected`, `running`,
 `succeeded`, `failed`, or `indeterminate`. Acceptance means only that the
@@ -171,8 +190,10 @@ Memory projections are deliberately distinct:
   points with links to their source event ranges.
 - **Knowledge:** evidence-backed facts, hypotheses, contradictions, confidence,
   scope, and provenance. Hypotheses never silently become facts.
-- **Lineage:** candidates or trajectory branches, parentage, evaluations, and
-  retained/rejected decisions.
+- **Attempts:** complete internal search trajectories anchored to a committed
+  state, including failed and non-improving work.
+- **Lineage:** the ordered single-parent sequence of externally accepted states
+  and their evaluation vectors. It excludes unsuccessful attempts.
 
 No vector database is required initially. SQLite FTS5, structured filters, and
 deterministic scoring are sufficient until BENCH-0001 shows a retrieval ceiling.
@@ -187,15 +208,25 @@ For each step, the coordinator:
 
 1. Persists queued receipts and operator commands, then refreshes projections.
 2. Applies pause/stop controls before any model call or proposal dispatch.
-3. Builds context and journals its manifest of selected event/item IDs.
+3. Ensures an active attempt is anchored to the latest committed node, then
+   builds context and journals its manifest of selected event/item IDs.
 4. Invokes the model through the existing model boundary for one typed result.
 5. Validates shape, action name, arguments, budgets, and stale context cursor.
 6. Journals an accepted result; invalid results become observations for repair.
 7. Sends an action proposal to the external runtime or applies a cognitive
-   update locally as a new event.
+   update/query locally as a new event. Lineage and knowledge queries return
+   referenced records through the next context without external effects.
 8. Persists returned receipts before interpreting them.
-9. Updates progress signals, requests supervision if triggered, and checkpoints
-   at an external terminal receipt, operator control, or configured event span.
+9. On evaluation, commits a successor only when the external receipt accepts the
+   evaluated state; otherwise the attempt continues or closes unsuccessfully.
+10. Updates progress signals, requests supervision if triggered, and checkpoints
+    at an external terminal receipt, operator control, committed successor, or
+    configured event span.
+
+One attempt may traverse the loop many times. The coordinator does not require
+planning, implementation, evaluation, and bug-fixing to occur once or in a
+fixed order. The agent controls their order and decides when to call the
+external evaluation function, which is central to the AVO operator.
 
 The coordinator permits at most one unresolved state-changing proposal per
 session in the initial implementation. This makes crash recovery and causal
@@ -207,9 +238,11 @@ new decision.
 Context has a hard token budget and three bands:
 
 1. **Mandatory:** task, environment/action contract, latest operator direction,
+   knowledge/evaluation contracts, committed-lineage head, active attempt,
    active budgets, pending action, current plan, and latest receipt.
 2. **Retrieved:** unresolved hypotheses, relevant evidence, prior failures, and
-   episodes ranked against the objective, plan step, and latest observation.
+   episodes or committed nodes ranked against the objective, plan step, and
+   latest observation.
 3. **Recent:** newest events that fit after mandatory and retrieved content.
 
 Candidate ranking combines FTS/BM25 relevance, explicit salience, unresolved
@@ -227,15 +260,17 @@ rewrite or delete source events.
 
 The monitor maintains rolling signals rather than asking a model whether it is
 stuck. Positive signals include new external score, newly satisfied evidence,
-resolved hypotheses, newly reachable state, and retained candidate improvement.
+resolved hypotheses, newly reachable state, and a new committed improvement.
 Negative signals include repeated normalized actions, repeated failure
 fingerprints, no positive signal over a step window, evaluation regression, and
 budget burn without new observations.
 
-Initial thresholds are intentionally visible defaults: supervision after six
-effectful receipts with no positive signal, or three repetitions of an action
-or failure fingerprint. A four-step cooldown prevents supervisor loops. Every
-trigger records its inputs, so BENCH-0001 can tune thresholds from evidence.
+A plateau alone is not failure: the paper's trajectory shows discrete jumps,
+long searches between commits, and diminishing returns. Repetition and absence
+of new information are stronger signals than elapsed steps alone. The monitor's
+window, thresholds, normalization, and cooldown are versioned run policy chosen
+from a PHASE-0003 experiment, not fixed by this architecture. Every trigger
+records its inputs so BENCH-0001 can measure false intervention and cost.
 
 Supervisor guidance must name the observed pattern, identify assumptions to
 challenge, and suggest a small discriminating experiment or replan. The main
@@ -243,11 +278,13 @@ agent may accept or reject it with a concise recorded reason. Repeated triggers
 escalate from guidance to checkpoint/replan, then to an operator question; they
 do not silently terminate externally controlled work.
 
-Where candidates apply, a variation step selects one parent, states one intended
-change, obtains the change through ordinary external actions, evaluates through
-the external evaluator, and retains or rejects from recorded evidence. Keeping
-one change attributable at a time is the default; combining parents or changes
-requires an explicit reason in the lineage event.
+A variation attempt starts from the current lineage head, states its intended
+direction, performs as many ordinary external actions as needed, and invokes the
+external evaluator when the agent judges the state ready. External acceptance
+commits a successor; rejection retains the full attempt only in trajectory
+history. One active lineage and one attributable direction per attempt are the
+defaults. Population sampling, multiple parents, and archive management are
+deferred, as they were outside the paper's evaluated single-lineage setting.
 
 ## Failure and recovery behavior
 
@@ -270,7 +307,8 @@ The first system is one Python process, one coordinator loop per active session,
 and one SQLite writer. Model and external execution latency dominate local work.
 Projection updates should be incremental, context queries indexed, and artifact
 content loaded only when selected. Record model calls, tokens, local selection
-time, external action count, wall time, and supervisor calls from day one.
+time, external action count, wall time, supervisor calls, attempts, evaluations,
+commits, and time/actions between commits from day one.
 
 Add concurrency, embeddings, remote state, or a workflow engine only when a
 repeatable benchmark demonstrates that the simple design is the limiting factor.
@@ -312,16 +350,19 @@ new kernel. No old database format is silently upgraded.
 - ARC-AGI-3 documentation: <https://docs.arcprize.org/>
 
 The paper and article inform decomposition and hypotheses, not compatibility
-claims. Exact external protocol versions and benchmark datasets are pinned when
-PHASE-0004 begins and recorded in BENCH-0001 evidence.
+claims. Sections 3.1-3.3 establish the scored lineage, knowledge base, evaluation
+function, autonomous multi-action variation step, single-lineage run, and
+conditional supervision. They do not publish the internal agent, prompt, memory
+algorithm, context algorithm, or supervisor thresholds; those remain Vharness
+designs requiring local evidence. Exact external protocol versions and benchmark
+datasets are pinned when PHASE-0004 begins and recorded in BENCH-0001 evidence.
 
 ## Open questions
 
-No question blocks PHASE-0001. Threshold tuning, shared-memory import policy,
-and whether learned retrieval outperforms deterministic retrieval require
-experiments after an end-to-end baseline exists.
+No question blocks PHASE-0001. Supervisor threshold selection, shared-memory
+import policy, and whether learned retrieval outperforms deterministic retrieval
+require experiments after an end-to-end baseline exists.
 
 ## Implementing phases
 
 PHASE-0001 through PHASE-0004 implement this architecture in dependency order.
-
