@@ -38,14 +38,45 @@ def _confusion(attempts: list[Attempt]) -> Confusion:
     return c
 
 
+def _eligible(attempt: Attempt) -> bool:
+    return attempt.status == "ok" and attempt.verdict in {"clean", "vulnerable"}
+
+
+def _unscored_counts(labeled: list[Attempt]) -> dict[str, int]:
+    counts = {
+        "unscored_parse_error": 0,
+        "unscored_api_error": 0,
+        "unscored_internal_error": 0,
+        "unscored_skipped": 0,
+        "unscored_other": 0,
+    }
+    field_by_status = {
+        "parse_error": "unscored_parse_error",
+        "api_error": "unscored_api_error",
+        "internal_error": "unscored_internal_error",
+        "skipped": "unscored_skipped",
+    }
+    for attempt in labeled:
+        if _eligible(attempt):
+            continue
+        counts[field_by_status.get(attempt.status, "unscored_other")] += 1
+    return counts
+
+
 def compute(attempts: list[Attempt]) -> dict:
     """All metrics over labeled attempts; empty when nothing is labeled."""
-    c = _confusion(attempts)
     labeled = [a for a in attempts if a.expected_verdict is not None]
+    scored = [a for a in labeled if _eligible(a)]
+    c = _confusion(scored)
+    unscored = _unscored_counts(labeled)
     metrics: dict = {
         "labeled": len(labeled),
+        "labeled_total": len(labeled),
+        "scored_total": len(scored),
         "tp": c.tp, "fp": c.fp, "tn": c.tn, "fn": c.fn,
     }
+    metrics.update(unscored)
+    metrics["coverage"] = round(len(scored) / len(labeled), 4) if labeled else 0.0
     p_den = c.tp + c.fp
     r_den = c.tp + c.fn
     precision = c.tp / p_den if p_den else 0.0
@@ -53,13 +84,13 @@ def compute(attempts: list[Attempt]) -> dict:
     metrics["precision"] = round(precision, 4)
     metrics["recall"] = round(recall, 4)
     metrics["f1"] = round(2 * precision * recall / (precision + recall), 4) if (precision + recall) else 0.0
-    clean = [a for a in labeled if a.expected_verdict == "clean"]
+    clean = [a for a in scored if a.expected_verdict == "clean"]
     flagged_clean = sum(1 for a in clean if a.verdict == "vulnerable")
     metrics["clean_total"] = len(clean)
     metrics["fp_rate_clean"] = round(flagged_clean / len(clean), 4) if clean else None
 
     # CWE-label accuracy (on labeled vulnerable attempts the model caught)
-    labeled_vuln = [a for a in labeled if a.expected_verdict == "vulnerable" and a.verdict == "vulnerable"]
+    labeled_vuln = [a for a in scored if a.expected_verdict == "vulnerable" and a.verdict == "vulnerable"]
     real_expected = [a for a in labeled_vuln if a.expected_findings and a.expected_findings[0].cwe != "CWE-0"]
     cwe_labeled = [a for a in real_expected if a.expected_findings]
     matched = sum(
@@ -70,7 +101,7 @@ def compute(attempts: list[Attempt]) -> dict:
     metrics["cwe_accuracy"] = round(matched / len(cwe_labeled), 4) if cwe_labeled else None
 
     per_cwe: dict[str, dict[str, int]] = {}
-    for a in labeled:
+    for a in scored:
         if a.expected_verdict != "vulnerable":
             continue
         for ef in a.expected_findings or []:
@@ -96,10 +127,18 @@ class MetricsReport(Evaluator):
             log.info("no labeled attempts — run a dataset probe (corpus/chat-dataset) to score the model")
         else:
             log.info(
-                "labeled=%s  P=%s R=%s F1=%s  (TP=%s FP=%s TN=%s FN=%s)",
-                m["labeled"], m["precision"], m["recall"], m["f1"],
+                "labeled=%s scored=%s coverage=%s P=%s R=%s F1=%s  (TP=%s FP=%s TN=%s FN=%s)",
+                m["labeled"], m["scored_total"], m["coverage"], m["precision"], m["recall"], m["f1"],
                 m["tp"], m["fp"], m["tn"], m["fn"],
             )
+            unscored = ", ".join(
+                f"{field}={m[field]}"
+                for field in (
+                    "unscored_parse_error", "unscored_api_error", "unscored_internal_error",
+                    "unscored_skipped", "unscored_other",
+                )
+            )
+            log.info("unscored: %s", unscored)
             if m["clean_total"]:
                 log.info("false-positive rate on clean code: %s", m["fp_rate_clean"])
             if m["cwe_labeled"]:

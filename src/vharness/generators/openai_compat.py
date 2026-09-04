@@ -122,6 +122,9 @@ class OpenAICompatible(Generator):
         # One extra attempt is reserved for length-truncated replies.
         total_attempts = self.max_retries + 2
         last_error: str | None = None
+        total_prompt_tokens = 0
+        total_completion_tokens = 0
+        total_latency = 0.0
         for attempt in range(total_attempts):
             started = time.monotonic()
             try:
@@ -145,6 +148,9 @@ class OpenAICompatible(Generator):
             usage = getattr(response, "usage", None)
             p_toks = (getattr(usage, "prompt_tokens", 0) or 0) if usage is not None else 0
             c_toks = (getattr(usage, "completion_tokens", 0) or 0) if usage is not None else 0
+            total_latency += latency
+            total_prompt_tokens += p_toks
+            total_completion_tokens += c_toks
             with self._stats_lock:
                 self.stats["latencies"].append(latency)
                 if usage is not None:
@@ -167,11 +173,18 @@ class OpenAICompatible(Generator):
                 text=raw,
                 model=self.model,
                 finish_reason=finish,
-                latency=latency,
-                prompt_tokens=p_toks,
-                completion_tokens=c_toks,
+                latency=total_latency,
+                prompt_tokens=total_prompt_tokens,
+                completion_tokens=total_completion_tokens,
             )
 
         with self._stats_lock:
             self.stats["api_errors"] += 1
-        return Generation(text="", model=self.model, error=last_error)
+        return Generation(
+            text="",
+            model=self.model,
+            error=last_error,
+            latency=total_latency,
+            prompt_tokens=total_prompt_tokens,
+            completion_tokens=total_completion_tokens,
+        )

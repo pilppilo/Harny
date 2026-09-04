@@ -100,18 +100,18 @@ def read_usage(
             if generation.get("cached"):
                 summary.cache_hits += 1
                 continue
-            if generation.get("error"):
-                summary.api_errors += 1
-                continue
-            summary.completed_requests += 1
             prompt_tokens = int(generation.get("prompt_tokens") or 0)
             completion_tokens = int(generation.get("completion_tokens") or 0)
             summary.prompt_tokens += prompt_tokens
             summary.completion_tokens += completion_tokens
-            if not prompt_tokens and not completion_tokens:
-                summary.responses_without_usage += 1
             latency = generation.get("latency")
             if isinstance(latency, (int, float)) and latency > 0:
                 summary.latencies.append(float(latency))
+            if generation.get("error"):
+                summary.api_errors += 1
+                continue
+            summary.completed_requests += 1
+            if not prompt_tokens and not completion_tokens:
+                summary.responses_without_usage += 1
 
     return sorted(summaries.values(), key=lambda item: (item.provider, item.model))

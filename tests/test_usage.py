@@ -55,6 +55,21 @@ def test_read_usage_all_models(tmp_path):
     ]
 
 
+def test_read_usage_counts_recorded_error_telemetry(tmp_path):
+    log = tmp_path / "error.jsonl"
+    log.write_text("\n".join(json.dumps(record) for record in [
+        {"type": "run_start", "run_id": "one", "provider": "https://one.example/v1", "model": "alpha"},
+        {"type": "attempt", "run_id": "one", "generation": {
+            "model": "alpha", "error": "retry exhausted", "prompt_tokens": 10,
+            "completion_tokens": 4, "latency": 0.4,
+        }},
+    ]) + "\n")
+    summary = read_usage([log], provider="https://one.example/v1", model="alpha")[0]
+    assert summary.api_errors == 1
+    assert summary.completed_requests == 0
+    assert (summary.prompt_tokens, summary.completion_tokens, summary.latency_p50) == (10, 4, 0.4)
+
+
 def test_usage_command_reports_local_usage(tmp_path, capsys):
     log = tmp_path / "run.jsonl"
     _write_log(log)

@@ -30,6 +30,10 @@ from . import generators  # noqa: F401,E402
 from . import probes  # noqa: F401,E402
 
 
+class RunPersistenceError(RuntimeError):
+    """A run produced work that could not be durably recorded."""
+
+
 def _format_location(attempt: Attempt) -> str:
     ctx = attempt.context or {}
     fn = ctx.get("function")
@@ -96,7 +100,7 @@ class Runner:
     ) -> None:
         load_entry_points()  # third-party plugins, idempotent
         self.generator = generator
-        self.detector_names = normalize_names(detectors, ["json-verdict"])
+        self.detector_names = normalize_names(detectors, ["json-verdict"], field="detectors")
         self.workers = workers
         self.log_file = log_file
         self.log_raw = log_raw
@@ -232,10 +236,14 @@ class Runner:
                 attempt.status = "internal_error"
                 attempt.verdict = "error"
                 attempt.detector_notes.append(f"internal error: {e}")
-            self._log(attempt, info, attempt_index)
+            try:
+                self._log(attempt, info, attempt_index)
+            except Exception as exc:  # noqa: BLE001 — a completed attempt must be durable
+                raise RunPersistenceError(f"attempt log write failed: {exc}") from exc
             return attempt
 
         done: list[Attempt | None] = [None] * len(attempts)
+        persistence_errors: list[Exception] = []
         total = len(attempts)
         with ThreadPoolExecutor(max_workers=max(1, self.workers)) as pool:
             futures = {pool.submit(work, a, index): index for index, a in enumerate(attempts)}
@@ -243,9 +251,18 @@ class Runner:
                 attempt_index = futures[fut]
                 try:
                     a = fut.result()
-                except Exception:  # noqa: BLE001 — belt & braces around work()
+                except Exception as exc:  # noqa: BLE001 — belt & braces around work()
                     log.exception("worker future failed (%d/%d)", completed, total)
-                    continue
+                    if isinstance(exc, RunPersistenceError):
+                        persistence_errors.append(exc)
+                    a = attempts[attempt_index]
+                    a.status = "internal_error"
+                    a.verdict = "error"
+                    a.detector_notes.append(f"worker future failed: {type(exc).__name__}: {exc}")
+                    try:
+                        self._log(a, info, attempt_index)
+                    except Exception as log_exc:  # noqa: BLE001 — reporting must be durable
+                        persistence_errors.append(log_exc)
                 done[attempt_index] = a
                 loc = _format_location(a)
                 telem = _format_telemetry(a)
@@ -288,11 +305,16 @@ class Runner:
             info.skipped += a.status == "skipped"
             info.findings += len(a.findings)
         info.wall_seconds = time.time() - info.started_at
+        if persistence_errors:
+            raise RunPersistenceError(
+                f"failed to durably record {len(persistence_errors)} attempt(s): {persistence_errors[0]}"
+            ) from persistence_errors[0]
         self._log_event({"type": "run_end", "run_id": info.run_id, "ts": time.time(),
                          "status": "complete", "attempts": info.attempts_total,
                          "ok": info.ok, "parse_errors": info.parse_errors,
                          "api_errors": info.api_errors, "internal_errors": info.internal_errors,
-                         "findings": info.findings, "wall_seconds": info.wall_seconds})
+                         "skipped": info.skipped, "findings": info.findings,
+                         "wall_seconds": info.wall_seconds})
         return ordered, info
 
     def evaluate(self, attempts: list[Attempt], run_info: dict, evaluator_names: list[str]) -> None:

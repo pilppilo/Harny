@@ -13,6 +13,7 @@ import argparse
 import json
 import os
 import sys
+from pathlib import Path
 
 from . import VERSION
 from .config import ConfigError, resolve_endpoint
@@ -151,14 +152,23 @@ def _probe_kwargs(args, probe_names: list[str]) -> dict:
 
 def _normalize_workflow(args) -> None:
     """Resolve CLI selections once for execution and persisted provenance."""
-    probes = normalize_names(getattr(args, "probes", None), [])
+    try:
+        probes = normalize_names(getattr(args, "probes", None), [], field="probes")
+        detectors = normalize_names(
+            getattr(args, "detectors", None), ["json-verdict"], field="detectors"
+        )
+        evaluators = normalize_names(
+            getattr(args, "evaluators", None), ["summary"], field="evaluators"
+        )
+    except ValueError as exc:
+        raise CLIError(str(exc)) from exc
     if getattr(args, "skip_corpus", False):
         probes = [name for name in probes if name != "corpus"]
     if not probes:
         raise CLIError("no probes selected")
     args._probe_names = probes
-    args._detector_names = normalize_names(getattr(args, "detectors", None), ["json-verdict"])
-    args._evaluator_names = normalize_names(getattr(args, "evaluators", None), ["summary"])
+    args._detector_names = detectors
+    args._evaluator_names = evaluators
 
 
 def _project_inputs(args, workflow: str) -> dict:
@@ -180,6 +190,7 @@ def _begin_project_run(args, workflow: str):
     project_path = getattr(args, "project", None)
     if not project_path:
         return None
+    launch_cwd = Path.cwd().resolve()
     try:
         project = resolve_project(project_path)
         if not getattr(args, "profile", None) and project.default_profile:
@@ -188,7 +199,7 @@ def _begin_project_run(args, workflow: str):
     except WorkspaceError as exc:
         raise CLIError(str(exc)) from exc
 
-    external_outputs = {
+    explicit_outputs = {
         field: str(getattr(args, field))
         for field in ("log_file", "out", "sarif_out", "markdown_out", "json_out", "metrics_out")
         if getattr(args, field, None)
@@ -201,13 +212,34 @@ def _begin_project_run(args, workflow: str):
     if not getattr(args, "metrics_out", None):
         args.metrics_out = str(run.reports_dir / "eval_metrics.json")
 
-    outputs = {"run_dir": str(run.path), "reports_dir": str(run.reports_dir)}
+    def provenance(requested: str, ownership: str) -> dict[str, str]:
+        candidate = Path(requested).expanduser()
+        absolute = candidate if candidate.is_absolute() else launch_cwd / candidate
+        resolved = absolute.resolve(strict=False)
+        if ownership != "project_default":
+            try:
+                resolved.relative_to(project.root.resolve())
+            except ValueError:
+                ownership = "explicit_external"
+            else:
+                ownership = "explicit_project"
+        return {"requested": requested, "resolved": str(resolved), "ownership": ownership}
+
+    outputs: dict[str, object] = {
+        "run_dir": str(run.path),
+        "reports_dir": str(run.reports_dir),
+        "launch_cwd": str(launch_cwd),
+        "output_provenance": {},
+    }
     for field in ("log_file", "out", "sarif_out", "markdown_out", "json_out", "metrics_out"):
         value = getattr(args, field, None)
         if value:
             outputs[field] = str(value)
-    if external_outputs:
-        outputs["external_outputs"] = external_outputs
+            requested = explicit_outputs.get(field)
+            outputs["output_provenance"][field] = provenance(
+                requested or str(value),
+                "explicit_external" if requested is not None else "project_default",
+            )
     try:
         update_run(run, status="running", outputs=outputs)
     except WorkspaceError as exc:  # pragma: no cover - filesystem failures are platform-specific
@@ -392,6 +424,7 @@ def cmd_project_runs(args) -> int:
 
 
 def cmd_list(args) -> int:
+    load_entry_points()
     regs = [
         ("probes", PROBE_REGISTRY),
         ("generators", GENERATOR_REGISTRY),

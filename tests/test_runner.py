@@ -25,6 +25,7 @@ def test_run_log_has_start_and_end_records(tmp_path):
     end = records[-1]
     assert end["status"] == "complete" and end["run_id"] == info.run_id
     assert end["findings"] == sum(len(a.findings) for a in attempts)
+    assert end["skipped"] == info.skipped
 
     # log_raw=True: raw text + prompt hash present for replay
     first_attempt = records[1]
@@ -166,4 +167,3 @@ def test_runner_error_logging(caplog):
         r = Runner(ErrorMock(), workers=1, verbose=0)
         attempts, info = r.run(["corpus"], {"limit": 1})
         assert any("↳ error: rate limit exceeded (HTTP 429)" in record.message for record in caplog.records)
-

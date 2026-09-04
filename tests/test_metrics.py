@@ -47,6 +47,34 @@ def test_unlabeled_attempts_ignored():
     assert m["tp"] + m["fp"] + m["tn"] + m["fn"] == 0
 
 
+def test_failed_attempts_are_unscored_not_negative_predictions():
+    m = compute([
+        _attempt(False, False, status="parse_error"),
+        _attempt(True, False, ["CWE-78"], status="api_error"),
+        _attempt(True, False, ["CWE-89"], status="internal_error"),
+        _attempt(False, False, status="skipped"),
+        _attempt(False, False, status="pending"),
+        _attempt(True, True, ["CWE-79"], ["CWE-79"]),
+    ])
+    assert m["labeled"] == m["labeled_total"] == 6
+    assert m["scored_total"] == 1
+    assert (m["tp"], m["fp"], m["tn"], m["fn"]) == (1, 0, 0, 0)
+    assert m["per_cwe_recall"] == {"CWE-79": 1.0}
+    assert m["coverage"] == round(1 / 6, 4)
+    assert (
+        m["scored_total"] + m["unscored_parse_error"] + m["unscored_api_error"]
+        + m["unscored_internal_error"] + m["unscored_skipped"] + m["unscored_other"]
+    ) == m["labeled_total"]
+    assert (m["unscored_parse_error"], m["unscored_api_error"], m["unscored_internal_error"],
+            m["unscored_skipped"], m["unscored_other"]) == (1, 1, 1, 1, 1)
+
+
+def test_metrics_empty_labels_have_zero_coverage():
+    m = compute([])
+    assert m["labeled"] == m["labeled_total"] == m["scored_total"] == 0
+    assert m["coverage"] == 0.0
+
+
 def test_chat_dataset_loader(tmp_path):
     q = {
         "messages": [

@@ -2,9 +2,10 @@
 
 **Date:** 2026-09-03  
 **Slug:** `code-review-fixes`  
-**Status:** Follow-up required — initial regression suite passes, second review found unresolved defects
+**Status:** Implemented — full regression suite passes (130 tests)
 **Initial baseline:** 84 tests passed before the first repair pass; the first
-pass reached 113 tests, but the follow-up defects below remain unresolved.
+pass reached 113 tests. The follow-up repairs and focused regression coverage
+raised the suite to 130 passing tests.
 
 ## Objective
 
@@ -12,9 +13,8 @@ Correct the verified defects in the existing static-analysis, project-run,
 reporting, and plugin foundations before adding dynamic HTTP assessment or
 other new product capabilities.
 
-This specification is a repair milestone, not evidence that the defects have
-already been fixed. Implementation is complete only when the regression tests
-and completion gate in this document pass.
+This specification records the completed repair milestone and its regression
+gate. Future changes must preserve the corrected behavior described here.
 
 ## Priority and implementation boundary
 
@@ -346,9 +346,9 @@ This hardening milestone is complete when:
 
 ## Follow-up review findings
 
-The first implementation pass reached 113 passing tests, but a second
-read-only review found the defects below. The milestone must remain open until
-these findings and their regression tests are complete.
+The first implementation pass reached 113 passing tests; a second read-only
+review found the defects below. They are resolved by the implementation and
+regression coverage recorded in this milestone.
 
 Follow-up priorities are:
 
@@ -394,8 +394,9 @@ omit it from all terminal counters while describing the run as complete.
 **Required fix:** Every discovered attempt must reach exactly one terminal
 status. If a future raises, mark its original attempt `internal_error`, set an
 error verdict and diagnostic note, record its `attempt_index`, and include it
-in run counters. If durable attempt logging itself fails, surface a run-level
-failure rather than claiming a fully recorded successful run.
+in run counters and the durable `run_end` record. If durable attempt logging
+itself fails, surface a run-level failure rather than claiming a fully recorded
+successful run.
 
 **Regression tests:** Force an exception outside the inner work handler and
 assert stable returned order, no pending attempts, exact internal-error counts,
@@ -441,20 +442,20 @@ length-truncated response and its successful retry, but the returned
 `Generation` contains only the final response's tokens. Attempt JSONL records
 and `vharness usage` therefore undercount locally observed billable usage.
 
-**Required fix:** Accumulate prompt and completion tokens across every response
-received for one logical generation and store those totals in the returned
-`Generation`, including when a later retry ends in a terminal error. Preserve
-optional per-response telemetry when it becomes useful, but the attempt-level
-totals must represent all observed provider usage. Update `read_usage()` to
-count recorded tokens and latency independently from the logical success/error
-classification; its current early `continue` on `generation.error` would
-otherwise discard the newly preserved billable usage. Cache hits remain
-zero-token local responses.
+**Required fix:** Accumulate prompt and completion tokens plus cumulative
+observed response latency across every response received for one logical
+generation and store those totals in the returned `Generation`, including when
+a later retry ends in a terminal error. Preserve optional per-response
+telemetry when it becomes useful, but the attempt-level totals must represent
+all observed provider usage. Update `read_usage()` to count recorded tokens and
+latency independently from the logical success/error classification; its
+current early `continue` on `generation.error` would otherwise discard the
+newly preserved billable usage. Cache hits remain zero-token local responses.
 
 **Regression tests:** Cover immediate success, one and multiple length retries,
 terminal error after a billable response, cache hits, and concurrent mixed
 paths. Assert generator summary, `Generation`, JSONL, and `vharness usage`
-agree on totals.
+agree on token and cumulative-latency totals.
 
 ### 20. Name-list normalization silently drops malformed values
 
@@ -573,10 +574,9 @@ empty-set coverage is `0.0`, the disjoint counters sum exactly to
 `labeled_total`, `labeled == labeled_total`, and the human and JSON metric
 summaries expose the complete schema.
 
-## Follow-up regression gaps from the first pass
+## Follow-up regression coverage delivered
 
-Before closing the milestone, add the originally required cases that remain
-missing or insufficiently isolated:
+The originally required cases were added or strengthened as follows:
 
 - project-scoped generic runs with JSON, SARIF, Markdown, and metrics tested
   independently;
@@ -590,9 +590,9 @@ missing or insufficiently isolated:
 - concurrent plugin activation and cached-instance rollback; and
 - retry token totals flowing through `Generation`, JSONL, and `read_usage()`.
 
-## Revised implementation order
+## Completed implementation order
 
-This order is authoritative and supersedes the historical first-pass order.
+This completed order supersedes the historical first-pass order.
 
 1. Add failing regression tests for findings 15–23 and the remaining gate
    gaps above.
@@ -605,5 +605,5 @@ This order is authoritative and supersedes the historical first-pass order.
    report coverage explicitly.
 7. Record unambiguous output provenance.
 8. Run focused tests, concurrency tests, and the complete suite.
-9. Change this document to `Implemented` only after every original and
-   follow-up completion criterion passes.
+9. Change this document to `Implemented` after every original and follow-up
+   completion criterion passes.

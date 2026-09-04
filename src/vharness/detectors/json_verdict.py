@@ -14,18 +14,28 @@ _SEVERITY_MAP = {
     "moderate": "Medium", "medium": "Medium",
     "low": "Low", "info": "Low", "informational": "Low", "none": "Low",
 }
-_CWE_RE = re.compile(r"(?:cwe[ -]*)?(\d{1,4})", re.IGNORECASE)
+_CWE_CANONICAL_RE = re.compile(r"^CWE[- ]?(\d+)(?:\s+.*)?$", re.IGNORECASE)
+_CWE_NUMERIC_RE = re.compile(r"^\d+$")
+_MIN_CWE = 1
+_MAX_CWE = 9999
 
 
 def _normalize_cwe(raw) -> str | None:
     if isinstance(raw, bool):
         return None
     if isinstance(raw, int):
-        return f"CWE-{raw}" if 0 < raw <= 9999 else None
+        return f"CWE-{raw}" if _MIN_CWE <= raw <= _MAX_CWE else None
     if not isinstance(raw, str):
         return None
-    m = _CWE_RE.search(raw.strip())
-    return f"CWE-{int(m.group(1))}" if m else None
+    value = raw.strip()
+    if _CWE_NUMERIC_RE.fullmatch(value):
+        number = int(value)
+    else:
+        match = _CWE_CANONICAL_RE.fullmatch(value)
+        if match is None:
+            return None
+        number = int(match.group(1))
+    return f"CWE-{number}" if _MIN_CWE <= number <= _MAX_CWE else None
 
 
 def _normalize_severity(raw) -> str | None:
@@ -94,6 +104,13 @@ class JSONVerdict(Detector):
             return
 
         vulns = data.get("vulnerabilities", [])
+        if not vulnerable and vulns != []:
+            attempt.status = "parse_error"
+            attempt.verdict = "unparseable"
+            attempt.detector_notes.append(
+                "has_vulnerability=false requires vulnerabilities to be absent or an empty list"
+            )
+            return
         if not isinstance(vulns, list):
             attempt.detector_notes.append("vulnerabilities is not a list; ignored")
             vulns = []

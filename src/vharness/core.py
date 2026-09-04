@@ -15,7 +15,10 @@ this codebase. Every stage is also usable standalone.
 
 from __future__ import annotations
 
+import threading
 import uuid
+import weakref
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from .log import log
@@ -26,6 +29,9 @@ VERSION = "0.2.0"
 # [project.entry-points."vharness.plugins"] my_thing = "pkg.mod:MyThing"
 ENTRY_POINT_GROUP = "vharness.plugins"
 _LOADED_ENTRY_POINTS: set[tuple[str, str, str]] = set()
+# Entry-point imports may register decorators while activation is in progress.
+# Keep registry access and activation in one re-entrant critical section.
+_PLUGIN_LOCK = threading.RLock()
 
 SEVERITIES = ("High", "Medium", "Low")
 LEVEL_MAP = {"High": "error", "Medium": "warning", "Low": "note"}
@@ -105,43 +111,77 @@ class Attempt:
 class PluginRegistry:
     """Registry for one pipeline stage (probes, generators, detectors, evaluators)."""
 
+    _known_registries: weakref.WeakSet = weakref.WeakSet()
+
     def __init__(self, stage: str) -> None:
         self.stage = stage
         self._items: dict[str, type] = {}
+        with _PLUGIN_LOCK:
+            self._known_registries.add(self)
 
     def register(self, cls):
-        if not getattr(cls, "name", None):
-            raise ValueError(f"{cls.__name__} must define a 'name' attribute")
-        if cls.name in self._items:
-            raise ValueError(f"duplicate {self.stage} name: {cls.name!r}")
-        self._items[cls.name] = cls
-        return cls
+        with _PLUGIN_LOCK:
+            if not getattr(cls, "name", None):
+                raise ValueError(f"{cls.__name__} must define a 'name' attribute")
+            if cls.name in self._items:
+                raise ValueError(f"duplicate {self.stage} name: {cls.name!r}")
+            self._items[cls.name] = cls
+            return cls
 
     def get(self, name: str):
-        try:
-            return self._items[name]
-        except KeyError:
-            raise KeyError(
-                f"unknown {self.stage} {name!r}; known: {sorted(self._items)}"
-            ) from None
+        with _PLUGIN_LOCK:
+            try:
+                return self._items[name]
+            except KeyError:
+                raise KeyError(
+                    f"unknown {self.stage} {name!r}; known: {sorted(self._items)}"
+                ) from None
 
     def names(self) -> list[str]:
-        return sorted(self._items)
+        with _PLUGIN_LOCK:
+            return sorted(self._items)
 
     def instantiate(self, name: str, *args, **kwargs):
         """Create and cache one shared instance (stateless stages)."""
-        if not hasattr(self, "_instances"):
-            self._instances: dict[str, object] = {}
-        if name not in self._instances:
-            self._instances[name] = self.get(name)(*args, **kwargs)
-        return self._instances[name]
+        with _PLUGIN_LOCK:
+            if not hasattr(self, "_instances"):
+                self._instances: dict[str, object] = {}
+            if name not in self._instances:
+                self._instances[name] = self.get(name)(*args, **kwargs)
+            return self._instances[name]
 
     def help_for(self, name: str) -> str:
         """Human help without instantiating (some plugins need ctor args)."""
-        return getattr(self.get(name), "help", "")
+        with _PLUGIN_LOCK:
+            return getattr(self.get(name), "help", "")
 
     def all_instances(self) -> list:
         return [self.instantiate(name) for name in self.names()]
+
+
+def _registry_snapshot() -> dict[PluginRegistry, tuple[dict[str, type], dict[str, object] | None]]:
+    """Copy registry state while the shared plugin lock is held."""
+    return {
+        registry: (
+            dict(registry._items),
+            dict(registry._instances) if hasattr(registry, "_instances") else None,
+        )
+        for registry in list(PluginRegistry._known_registries)
+    }
+
+
+def _restore_registry_snapshot(snapshot: dict[PluginRegistry, tuple[dict[str, type], dict[str, object] | None]]) -> None:
+    """Restore all known registries, including ones created by a failed import."""
+    registries = set(PluginRegistry._known_registries) | set(snapshot)
+    for registry in registries:
+        items, instances = snapshot.get(registry, ({}, None))
+        registry._items.clear()
+        registry._items.update(items)
+        if instances is None:
+            if hasattr(registry, "_instances"):
+                del registry._instances
+        else:
+            registry._instances = dict(instances)
 
 
 def load_entry_points() -> None:
@@ -156,23 +196,26 @@ def load_entry_points() -> None:
         from importlib.metadata import entry_points
     except ImportError:  # py<3.10
         return
-    for ep in entry_points(group=ENTRY_POINT_GROUP):
-        identity = (getattr(ep, "group", ENTRY_POINT_GROUP), ep.name, ep.value)
-        if identity in _LOADED_ENTRY_POINTS:
-            continue
-        try:
-            obj = ep.load()
-            if hasattr(obj, "register_plugins") and callable(obj.register_plugins):
-                obj.register_plugins()
-            else:
-                reg = getattr(obj, "registry", None)
-                if reg is None or not hasattr(reg, "register"):
-                    raise ValueError("entry point exposes neither register_plugins() nor a registry")
-                reg.register(obj)
-        except Exception as e:  # noqa: BLE001 — third-party plugin failures are contained
-            log.warning("plugin entry point %s (%s) failed to activate: %s", ep.name, ep.value, e)
-            continue
-        _LOADED_ENTRY_POINTS.add(identity)
+    with _PLUGIN_LOCK:
+        for ep in entry_points(group=ENTRY_POINT_GROUP):
+            identity = (getattr(ep, "group", ENTRY_POINT_GROUP), ep.name, ep.value)
+            if identity in _LOADED_ENTRY_POINTS:
+                continue
+            snapshot = _registry_snapshot()
+            try:
+                obj = ep.load()
+                if hasattr(obj, "register_plugins") and callable(obj.register_plugins):
+                    obj.register_plugins()
+                else:
+                    reg = getattr(obj, "registry", None)
+                    if reg is None or not hasattr(reg, "register"):
+                        raise ValueError("entry point exposes neither register_plugins() nor a registry")
+                    reg.register(obj)
+            except Exception as e:  # noqa: BLE001 — third-party plugin failures are contained
+                _restore_registry_snapshot(snapshot)
+                log.warning("plugin entry point %s (%s) failed to activate: %s", ep.name, ep.value, e)
+                continue
+            _LOADED_ENTRY_POINTS.add(identity)
 
 
 PROBE_REGISTRY: PluginRegistry = PluginRegistry("probe")
@@ -182,7 +225,7 @@ EVALUATOR_REGISTRY: PluginRegistry = PluginRegistry("evaluator")
 ALL_REGISTRIES = [PROBE_REGISTRY, GENERATOR_REGISTRY, DETECTOR_REGISTRY, EVALUATOR_REGISTRY]
 
 
-def normalize_names(value, default: list[str]) -> list[str]:
+def normalize_names(value, default: list[str], *, field: str = "selection") -> list[str]:
     """Normalize a comma-delimited name string or a sequence of names.
 
     Empty values use the caller-provided explicit default. Keeping this in core
@@ -190,9 +233,14 @@ def normalize_names(value, default: list[str]) -> list[str]:
     """
     if value is None:
         return list(default)
-    values = value.split(",") if isinstance(value, str) else value
-    try:
-        names = [item.strip() for item in values if isinstance(item, str) and item.strip()]
-    except TypeError:
-        names = []
+    if isinstance(value, str):
+        values = value.split(",")
+    elif not isinstance(value, Sequence):
+        raise ValueError(f"{field} must be a comma-separated string or a sequence of strings; got {value!r}")
+    else:
+        values = value
+    for item in values:
+        if not isinstance(item, str):
+            raise ValueError(f"{field} must contain only strings; got {item!r}")
+    names = [item.strip() for item in values if item.strip()]
     return names or list(default)

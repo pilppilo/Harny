@@ -285,7 +285,7 @@ def create_run(project: Project, workflow: str, normalized_inputs: dict[str, Any
     raise WorkspaceError("could not allocate a unique project run ID")
 
 
-def update_run(run: Run, *, status: str | None = None, outputs: dict[str, str] | None = None,
+def update_run(run: Run, *, status: str | None = None, outputs: dict[str, Any] | None = None,
                exit_code: int | None = None, stop_reason: str | None = None) -> dict[str, Any]:
     """Atomically update mutable run lifecycle fields."""
     data = _read_metadata(run)
