@@ -20,9 +20,10 @@ from vharness.agent import (
     TaskSpec,
 )
 from vharness.agent.artifacts import ArtifactStore
-from vharness.agent.errors import ContractError, TransitionError
+from vharness.agent.codec import canonical_json
+from vharness.agent.errors import ContractError, IntegrityError, TransitionError
 from vharness.agent.journal import SqliteJournal
-from vharness.agent.models import ExecutionStatus, Pause
+from vharness.agent.models import ArtifactRef, ExecutionStatus, Pause
 from vharness.agent.ports import ReconciliationKind, ReconciliationResult
 
 
@@ -78,10 +79,12 @@ class FakeEvaluator:
     def __init__(self, accepted: bool = True) -> None:
         self.accepted = accepted
         self.requests = []
+        self.evidence = ()
+        self.last_receipt = None
 
     def evaluate(self, request):
         self.requests.append(request)
-        return EvaluationReceipt(
+        receipt = EvaluationReceipt(
             receipt_id=f"evaluation-{request.request_id}",
             request_id=request.request_id,
             objective_version=request.objective_version,
@@ -91,7 +94,10 @@ class FakeEvaluator:
             accepted=self.accepted,
             comparison="improved" if self.accepted else "regressed",
             objectives={"score": 1},
+            evidence=self.evidence,
         )
+        self.last_receipt = receipt
+        return receipt
 
 
 @pytest.fixture
@@ -141,6 +147,7 @@ def test_session_commits_only_externally_accepted_successor_and_replays(dependen
         "action_intended",
         "receipt_received",
         "evaluation_intended",
+        "evaluation_intake",
         "evaluation_received",
         "lineage_promoted",
     ]
@@ -197,9 +204,106 @@ def test_second_action_uses_attempt_result_state(dependencies):
     session.begin_attempt()
     session.submit_action("inspect", {}, rationale="first")
     session.submit_action("inspect", {}, rationale="second")
-    assert runtime.proposals[1].expected_state == runtime.receipts[
-        runtime.proposals[0].proposal_id
-    ].state
+    assert (
+        runtime.proposals[1].expected_state
+        == runtime.receipts[runtime.proposals[0].proposal_id].state
+    )
+
+
+def test_evaluation_intake_is_durable_when_evidence_verification_fails(dependencies):
+    journal, artifacts, environment, runtime, evaluator = dependencies
+    evaluator.evidence = (ArtifactRef("f" * 64, 1, "text/plain", "fixture"),)
+    session = Session.create(
+        "session-evidence",
+        _task(),
+        journal=journal,
+        artifacts=artifacts,
+        environment=environment,
+        runtime=runtime,
+        evaluator=evaluator,
+    )
+    session.begin_attempt()
+    receipt = session.submit_action("inspect", {}, rationale="candidate")
+    with pytest.raises(IntegrityError, match="missing"):
+        session.request_evaluation(receipt.state)
+    kinds = [event.kind for event in session.events()]
+    assert "evaluation_intake" in kinds
+    assert "evaluation_verification_failed" in kinds
+    assert "evaluation_received" not in kinds
+    intake = next(
+        event for event in session.events() if event.kind == "evaluation_intake"
+    )
+    assert intake.payload["raw_receipt"] == canonical_json(evaluator.last_receipt)
+
+
+def test_action_schema_enforces_declared_properties(dependencies):
+    journal, artifacts, _environment, runtime, evaluator = dependencies
+
+    @dataclass
+    class StrictEnvironment:
+        def describe(self) -> EnvironmentContract:
+            return EnvironmentContract(
+                environment_id="fake",
+                version="1",
+                initial_state=StateRef("fake", "initial", digest="0" * 64),
+                actions=(
+                    ActionDefinition(
+                        "inspect",
+                        "Inspect current state",
+                        {"type": "object", "additionalProperties": False},
+                    ),
+                ),
+                capabilities=RuntimeCapabilities(),
+            )
+
+    session = Session.create(
+        "session-schema",
+        _task(),
+        journal=journal,
+        artifacts=artifacts,
+        environment=StrictEnvironment(),
+        runtime=runtime,
+        evaluator=evaluator,
+    )
+    session.begin_attempt()
+    with pytest.raises(ContractError, match="undeclared"):
+        session.submit_action("inspect", {"unexpected": 1}, rationale="invalid")
+    assert runtime.proposals == []
+
+
+def test_action_schema_rejects_unsupported_nested_constructs(dependencies):
+    journal, artifacts, _environment, runtime, evaluator = dependencies
+
+    @dataclass
+    class UnsupportedSchemaEnvironment:
+        def describe(self) -> EnvironmentContract:
+            return EnvironmentContract(
+                environment_id="fake",
+                version="1",
+                initial_state=StateRef("fake", "initial", digest="0" * 64),
+                actions=(
+                    ActionDefinition(
+                        "inspect",
+                        "Inspect current state",
+                        {"properties": {"mode": {"type": "string", "enum": ["x"]}}},
+                    ),
+                ),
+                capabilities=RuntimeCapabilities(),
+            )
+
+    session = Session.create(
+        "session-nested-schema",
+        _task(),
+        journal=journal,
+        artifacts=artifacts,
+        environment=UnsupportedSchemaEnvironment(),
+        runtime=runtime,
+        evaluator=evaluator,
+    )
+    session.begin_attempt()
+    with pytest.raises(ContractError, match="unsupported constructs"):
+        session.submit_action("inspect", {}, rationale="invalid schema")
+    assert runtime.proposals == []
 
 
 def test_steering_makes_late_receipts_evidence_without_advancing_new_objective(

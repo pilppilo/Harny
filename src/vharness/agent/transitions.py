@@ -134,6 +134,7 @@ def promotion_disposition(
     current = state.task.objective_version
     current_head = state.lineage_head.node_id
     matching = (
+        receipt.request_id == request.request_id,
         request.objective_version == current,
         receipt.objective_version == current,
         request.baseline_node_id == current_head,
@@ -173,13 +174,19 @@ def promote(
         evaluation_receipt_id=receipt.receipt_id,
         objectives=receipt.objectives,
     )
+    status = (
+        SessionStatus.COMPLETED
+        if state.task.completion_mode.value == "finite"
+        and receipt.comparison == "completed"
+        else SessionStatus.RUNNING
+    )
     return replace(
         state,
         lineage_head=node,
         active_attempt=None,
         pending_proposal_id=None,
         wait_reason=None,
-        status=SessionStatus.RUNNING,
+        status=status,
     )
 
 

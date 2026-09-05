@@ -2,8 +2,9 @@
 
 # pylint: disable=too-many-instance-attributes,too-many-arguments
 # Session owns explicit external boundaries by design; collapsing them would hide I/O.
-# pylint: disable=too-many-locals,too-many-return-statements
+# pylint: disable=too-many-locals,too-many-return-statements,too-many-branches
 # Rebuild and command dispatch remain local, bounded coordinator responsibilities.
+# Rebuild restores several independent durable indexes from one ordered stream.
 
 from __future__ import annotations
 
@@ -88,6 +89,8 @@ class Session:
         self._reservations: dict[str, ResourceReservation] = {}
         self._receipts: dict[str, ExecutionReceipt] = {}
         self._commands: dict[str, OperatorCommand] = {}
+        self._proposal_attempts: dict[str, tuple[str, int]] = {}
+        self._settled_operations: set[str] = set()
 
     @classmethod
     def create(
@@ -166,6 +169,12 @@ class Session:
             if isinstance(reservation, Mapping):
                 parsed = reservation_from_payload(reservation)
                 session._reservations[parsed.operation_id] = parsed
+            proposal = event.payload.get("proposal")
+            if event.kind == "action_intended" and isinstance(proposal, Mapping):
+                session._proposal_attempts[_string(proposal, "proposal_id")] = (
+                    _string(proposal, "attempt_id"),
+                    _integer(proposal, "objective_version"),
+                )
             receipt = event.payload.get("receipt")
             if event.kind == "receipt_received" and isinstance(receipt, Mapping):
                 parsed_receipt = receipt_from_payload(receipt)
@@ -178,6 +187,15 @@ class Session:
                 command_id = event.payload.get("command_id")
                 if isinstance(command_id, str):
                     applied.add(command_id)
+            if event.kind != "command_admitted" and isinstance(command_data, Mapping):
+                applied.add(_string(command_data, "command_id"))
+            if event.kind == "receipt_received":
+                receipt_data = event.payload.get("receipt")
+                if isinstance(receipt_data, Mapping):
+                    status = _string(receipt_data, "status")
+                    if status not in ("accepted", "running"):
+                        proposal_id = _string(receipt_data, "proposal_id")
+                        session._settled_operations.add(proposal_id)
         session._commands = admitted
         session._inbox = [
             command
@@ -226,7 +244,12 @@ class Session:
 
     def advance(self) -> SessionView:
         """Apply queued operator commands; it never sleeps or dispatches new work."""
-        for command in tuple(self._inbox):
+        controls = (Pause, Steer, Stop)
+        commands = sorted(
+            self._inbox,
+            key=lambda command: 0 if isinstance(command, controls) else 1,
+        )
+        for command in commands:
             try:
                 self._apply_command(command)
             except (ContractError, TransitionError) as exc:
@@ -303,6 +326,10 @@ class Session:
             ledger=ledger,
         )
         self._reservations[proposal_id] = reservation
+        self._proposal_attempts[proposal_id] = (
+            attempt.attempt_id,
+            self._state.task.objective_version,
+        )
         self._persist(
             "action_intended",
             intended,
@@ -327,11 +354,21 @@ class Session:
         state = record_receipt_state(
             self._state, receipt.proposal_id, receipt.status.value
         )
+        proposal_attempt = self._proposal_attempts.get(receipt.proposal_id)
+        applies_to_active_attempt = (
+            proposal_attempt
+            == (
+                self._state.active_attempt.attempt_id,
+                self._state.task.objective_version,
+            )
+            if self._state.active_attempt is not None
+            else False
+        )
         if (
             receipt.state is not None
             and receipt.status
             not in (ExecutionStatus.ACCEPTED, ExecutionStatus.RUNNING)
-            and state.active_attempt is not None
+            and applies_to_active_attempt
         ):
             state = replace(
                 state,
@@ -339,22 +376,28 @@ class Session:
                     state.active_attempt, result_state=receipt.state
                 ),
             )
-        if reservation is not None and receipt.status not in (
-            ExecutionStatus.ACCEPTED,
-            ExecutionStatus.RUNNING,
+        if (
+            receipt.status
+            not in (
+                ExecutionStatus.ACCEPTED,
+                ExecutionStatus.RUNNING,
+            )
+            and receipt.proposal_id not in self._settled_operations
         ):
             state = replace(
                 state, ledger=state.ledger.settle(reservation, receipt.usage)
             )
         self._persist("receipt_received", state, {"receipt": receipt})
         self._receipts[receipt.receipt_id] = receipt
+        if receipt.status not in (ExecutionStatus.ACCEPTED, ExecutionStatus.RUNNING):
+            self._settled_operations.add(receipt.proposal_id)
         return self.view()
 
     def request_evaluation(self, state: StateRef | None = None) -> EvaluationReceipt:
         """Request external evaluation and promote only an applicable result."""
         self._require_schedulable()
         attempt = self._require_active_attempt()
-        evaluated_state = state or self._state.lineage_head.state
+        evaluated_state = state or attempt.result_state or attempt.starting_state
         request = EvaluationRequest(
             request_id=_new_id("evaluation"),
             session_id=self._session_id,
@@ -374,6 +417,7 @@ class Session:
         pending = replace(
             self._state,
             status=SessionStatus.WAITING,
+            pending_proposal_id=request.request_id,
             ledger=ledger,
             wait_reason="evaluation pending",
         )
@@ -387,10 +431,26 @@ class Session:
         settled = replace(
             self._state,
             status=SessionStatus.RUNNING,
+            pending_proposal_id=None,
             wait_reason=None,
             ledger=self._state.ledger.settle(reservation, None),
         )
         disposition = promotion_disposition(settled, request, receipt)
+        self._persist(
+            "evaluation_intake",
+            settled,
+            {"receipt_id": receipt.receipt_id, "raw_receipt": canonical_json(receipt)},
+        )
+        try:
+            for evidence in receipt.evidence:
+                self._artifacts.read(evidence)
+        except IntegrityError as exc:
+            self._persist(
+                "evaluation_verification_failed",
+                settled,
+                {"receipt_id": receipt.receipt_id, "reason": str(exc)},
+            )
+            raise
         self._persist(
             "evaluation_received",
             settled,
@@ -539,6 +599,27 @@ def _validate_action_arguments(
     properties = schema.get("properties", {})
     if not isinstance(properties, Mapping):
         raise ContractError("action schema properties must be an object")
+    unsupported = {
+        key
+        for key in schema
+        if key not in {"type", "required", "properties", "additionalProperties"}
+    }
+    if schema.get("type", "object") != "object" or unsupported:
+        raise ContractError("action schema uses unsupported constructs")
+    additional = schema.get("additionalProperties", True)
+    if not isinstance(additional, bool):
+        raise ContractError("action schema additionalProperties must be a boolean")
+    if not additional and set(arguments) - set(properties):
+        raise ContractError("action arguments include undeclared fields")
+    for name, property_schema in properties.items():
+        if not isinstance(name, str) or not isinstance(property_schema, Mapping):
+            raise ContractError("action schema property must be a named object")
+        if property_schema.get("type") not in ("string", "integer", "boolean"):
+            raise ContractError(f"action schema has unsupported type for {name!r}")
+        if set(property_schema) != {"type"}:
+            raise ContractError(
+                f"action schema property {name!r} uses unsupported constructs"
+            )
     for name, value in arguments.items():
         property_schema = properties.get(name)
         if not isinstance(property_schema, Mapping):
