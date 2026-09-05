@@ -22,7 +22,7 @@ from vharness.agent import (
 from vharness.agent.artifacts import ArtifactStore
 from vharness.agent.errors import ContractError, TransitionError
 from vharness.agent.journal import SqliteJournal
-from vharness.agent.models import ExecutionStatus
+from vharness.agent.models import ExecutionStatus, Pause
 from vharness.agent.ports import ReconciliationKind, ReconciliationResult
 
 
@@ -155,6 +155,51 @@ def test_session_commits_only_externally_accepted_successor_and_replays(dependen
     )
     assert reopened.view() == view
     assert runtime.proposals and len(runtime.proposals) == 1
+
+
+def test_admitted_command_reopens_and_applies_once(dependencies):
+    journal, artifacts, environment, runtime, evaluator = dependencies
+    session = Session.create(
+        "session-command",
+        _task(),
+        journal=journal,
+        artifacts=artifacts,
+        environment=environment,
+        runtime=runtime,
+        evaluator=evaluator,
+    )
+    command = Pause("pause-1", "session-command")
+    assert session.enqueue(command) == "pause-1"
+    reopened = Session.open(
+        "session-command",
+        journal=journal,
+        artifacts=artifacts,
+        environment=environment,
+        runtime=runtime,
+        evaluator=evaluator,
+    )
+    assert reopened.advance().status is SessionStatus.PAUSED
+    assert reopened.enqueue(command) == "pause-1"
+    assert [event.kind for event in reopened.events()].count("session_paused") == 1
+
+
+def test_second_action_uses_attempt_result_state(dependencies):
+    journal, artifacts, environment, runtime, evaluator = dependencies
+    session = Session.create(
+        "session-sequential",
+        _task(),
+        journal=journal,
+        artifacts=artifacts,
+        environment=environment,
+        runtime=runtime,
+        evaluator=evaluator,
+    )
+    session.begin_attempt()
+    session.submit_action("inspect", {}, rationale="first")
+    session.submit_action("inspect", {}, rationale="second")
+    assert runtime.proposals[1].expected_state == runtime.receipts[
+        runtime.proposals[0].proposal_id
+    ].state
 
 
 def test_steering_makes_late_receipts_evidence_without_advancing_new_objective(

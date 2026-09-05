@@ -29,10 +29,12 @@ def to_json_value(value: object) -> JsonValue:
     if isinstance(value, Enum):
         return to_json_value(value.value)
     if is_dataclass(value):
-        return {
+        encoded = {
             item.name: to_json_value(getattr(value, item.name))
             for item in fields(value)
         }
+        encoded["__type__"] = type(value).__name__
+        return encoded
     if isinstance(value, Mapping):
         if not all(isinstance(key, str) for key in value):
             raise ContractError("JSON object keys must be strings")

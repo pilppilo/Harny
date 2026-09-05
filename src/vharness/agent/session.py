@@ -48,6 +48,8 @@ from .models import (
     UsageMeasurement,
 )
 from .ports import Environment, Evaluator, Runtime
+from .replay import replay
+from .session_state import receipt_from_payload, reservation_from_payload
 from .transitions import (
     SessionState,
     UsageLedger,
@@ -135,7 +137,7 @@ class Session:
         runtime: Runtime,
         evaluator: Evaluator,
     ) -> "Session":
-        """Rebuild state from journal snapshots without resubmitting external work."""
+        """Rebuild validated state from journal facts without external submission."""
         events: list[Event] = []
         cursor = 0
         while True:
@@ -144,12 +146,9 @@ class Session:
                 break
             events.extend(page)
             cursor = page[-1].sequence
-        if not events or events[0].kind != "session_created":
+        if not events:
             raise IntegrityError(f"session {session_id!r} has no creation event")
-        snapshot = events[-1].payload.get("snapshot")
-        if not isinstance(snapshot, Mapping):
-            raise IntegrityError("latest session event has no valid snapshot")
-        state = _state_from_snapshot(snapshot)
+        state = replay(events)
         session = cls(
             session_id,
             state,
@@ -160,15 +159,31 @@ class Session:
             runtime=runtime,
             evaluator=evaluator,
         )
+        admitted: dict[str, OperatorCommand] = {}
+        applied: set[str] = set()
         for event in events:
             reservation = event.payload.get("reservation")
             if isinstance(reservation, Mapping):
-                parsed = _reservation_from_payload(reservation)
+                parsed = reservation_from_payload(reservation)
                 session._reservations[parsed.operation_id] = parsed
             receipt = event.payload.get("receipt")
             if event.kind == "receipt_received" and isinstance(receipt, Mapping):
-                parsed_receipt = _receipt_from_payload(receipt)
+                parsed_receipt = receipt_from_payload(receipt)
                 session._receipts[parsed_receipt.receipt_id] = parsed_receipt
+            command_data = event.payload.get("command")
+            if event.kind == "command_admitted" and isinstance(command_data, Mapping):
+                command = _command_from_payload(command_data)
+                admitted[command.command_id] = command
+            if event.kind in ("command_applied", "command_rejected"):
+                command_id = event.payload.get("command_id")
+                if isinstance(command_id, str):
+                    applied.add(command_id)
+        session._commands = admitted
+        session._inbox = [
+            command
+            for command_id, command in admitted.items()
+            if command_id not in applied
+        ]
         return session
 
     @property
@@ -204,16 +219,31 @@ class Session:
             if existing != command:
                 raise ContractError("command ID was reused with different content")
             return command.command_id
+        self._persist("command_admitted", self._state, {"command": command})
         self._commands[command.command_id] = command
         self._inbox.append(command)
         return command.command_id
 
     def advance(self) -> SessionView:
         """Apply queued operator commands; it never sleeps or dispatches new work."""
-        commands = tuple(self._inbox)
-        self._inbox.clear()
-        for command in commands:
-            self._apply_command(command)
+        for command in tuple(self._inbox):
+            try:
+                self._apply_command(command)
+            except (ContractError, TransitionError) as exc:
+                self._persist(
+                    "command_rejected",
+                    self._state,
+                    {"command_id": command.command_id, "reason": str(exc)},
+                    causation_id=command.command_id,
+                )
+            else:
+                self._persist(
+                    "command_applied",
+                    self._state,
+                    {"command_id": command.command_id},
+                    causation_id=command.command_id,
+                )
+            self._inbox.remove(command)
         return self.view()
 
     def begin_attempt(self, attempt_id: str | None = None) -> Attempt:
@@ -238,8 +268,12 @@ class Session:
         self._require_schedulable()
         attempt = self._require_active_attempt()
         contract = self._environment.describe()
-        if action_name not in {action.name for action in contract.actions}:
+        action = next(
+            (item for item in contract.actions if item.name == action_name), None
+        )
+        if action is None:
             raise ContractError(f"unknown environment action {action_name!r}")
+        _validate_action_arguments(arguments, action.argument_schema)
         proposal_id = proposal_id or _new_id("proposal")
         reservation = ResourceReservation(
             reservation_id=_new_id("reservation"),
@@ -256,7 +290,7 @@ class Session:
             attempt_id=attempt.attempt_id,
             action_name=action_name,
             arguments=to_json_value(arguments),
-            expected_state=self._state.lineage_head.state,
+            expected_state=attempt.result_state or attempt.starting_state,
             reservation=reservation,
             rationale=rationale,
             idempotency_key=proposal_id if contract.capabilities.idempotency else None,
@@ -293,6 +327,18 @@ class Session:
         state = record_receipt_state(
             self._state, receipt.proposal_id, receipt.status.value
         )
+        if (
+            receipt.state is not None
+            and receipt.status
+            not in (ExecutionStatus.ACCEPTED, ExecutionStatus.RUNNING)
+            and state.active_attempt is not None
+        ):
+            state = replace(
+                state,
+                active_attempt=replace(
+                    state.active_attempt, result_state=receipt.state
+                ),
+            )
         if reservation is not None and receipt.status not in (
             ExecutionStatus.ACCEPTED,
             ExecutionStatus.RUNNING,
@@ -437,7 +483,12 @@ class Session:
         raise ContractError(f"unsupported phase-one command: {type(command).__name__}")
 
     def _persist(
-        self, kind: str, state: SessionState, fields: Mapping[str, object]
+        self,
+        kind: str,
+        state: SessionState,
+        fields: Mapping[str, object],
+        *,
+        causation_id: str | None = None,
     ) -> Event:
         event = Event(
             event_id=_new_id("event"),
@@ -447,6 +498,7 @@ class Session:
             objective_version=state.task.objective_version,
             payload={"snapshot": _state_snapshot(state), **to_json_value(fields)},
             recorded_at=datetime.now(timezone.utc).isoformat(),
+            causation_id=causation_id,
         )
         self._cursor = self._journal.append((event,), expected_cursor=self._cursor)
         self._state = state
@@ -466,6 +518,70 @@ class Session:
 
 def _new_id(prefix: str) -> str:
     return f"{prefix}-{uuid4().hex}"
+
+
+def _validate_action_arguments(
+    arguments: Mapping[str, object], schema: Mapping[str, object]
+) -> None:
+    """Validate the small object-schema subset advertised by Phase 1 actions."""
+    if not isinstance(arguments, Mapping) or not all(
+        isinstance(key, str) for key in arguments
+    ):
+        raise ContractError("action arguments must be a string-keyed object")
+    required = schema.get("required", ())
+    if not isinstance(required, (tuple, list)) or not all(
+        isinstance(key, str) for key in required
+    ):
+        raise ContractError("action schema required must be an array of strings")
+    absent = set(required) - set(arguments)
+    if absent:
+        raise ContractError(f"action arguments omit required fields: {sorted(absent)}")
+    properties = schema.get("properties", {})
+    if not isinstance(properties, Mapping):
+        raise ContractError("action schema properties must be an object")
+    for name, value in arguments.items():
+        property_schema = properties.get(name)
+        if not isinstance(property_schema, Mapping):
+            continue
+        declared_type = property_schema.get("type")
+        if declared_type == "string" and not isinstance(value, str):
+            raise ContractError(f"action argument {name!r} must be a string")
+        if declared_type == "integer" and (
+            isinstance(value, bool) or not isinstance(value, int)
+        ):
+            raise ContractError(f"action argument {name!r} must be an integer")
+        if declared_type == "boolean" and not isinstance(value, bool):
+            raise ContractError(f"action argument {name!r} must be a boolean")
+
+
+def _command_from_payload(value: Mapping[str, object]) -> OperatorCommand:
+    """Decode an admitted command once while rebuilding its durable inbox."""
+    command_id = _string(value, "command_id")
+    session_id = _string(value, "session_id")
+    command_type = _string(value, "__type__") if "__type__" in value else None
+    # Older journal payloads have no type marker and cannot be admitted commands.
+    if command_type == "Message":
+        return Message(command_id, session_id, _string(value, "text"))
+    if command_type == "Steer":
+        return Steer(
+            command_id,
+            session_id,
+            _string(value, "objective"),
+            _string(value, "success_evidence"),
+        )
+    if command_type == "Pause":
+        return Pause(command_id, session_id)
+    if command_type == "Resume":
+        return Resume(command_id, session_id)
+    if command_type == "Stop":
+        return Stop(command_id, session_id)
+    if command_type == "CheckpointRequest":
+        return CheckpointRequest(command_id, session_id)
+    if command_type == "EvaluationCommand":
+        return EvaluationCommand(
+            command_id, session_id, _state_ref_from(_mapping(value, "state"))
+        )
+    raise IntegrityError("admitted command has an unsupported type")
 
 
 def _state_snapshot(state: SessionState) -> Mapping[str, object]:
@@ -591,12 +707,15 @@ def _usage_from_payload(value: Mapping[str, object]) -> UsageMeasurement:
 
 
 def _state_ref_from(value: Mapping[str, object]) -> StateRef:
+    restorable = value.get("restorable", False)
+    if not isinstance(restorable, bool):
+        raise IntegrityError("snapshot restorable must be a boolean")
     return StateRef(
         owner=_string(value, "owner"),
         value=_string(value, "value"),
         digest=_optional_string(value, "digest"),
         revision=_optional_string(value, "revision"),
-        restorable=bool(value.get("restorable", False)),
+        restorable=restorable,
     )
 
 

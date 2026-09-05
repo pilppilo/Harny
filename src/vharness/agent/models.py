@@ -25,7 +25,19 @@ def frozen_mapping(
     values: Mapping[str, JsonValue] | None = None,
 ) -> Mapping[str, JsonValue]:
     """Copy a JSON-shaped mapping so domain records never share caller mutation."""
-    return MappingProxyType(dict(values or {}))
+    copied = {key: _freeze_json(value) for key, value in (values or {}).items()}
+    return MappingProxyType(copied)
+
+
+def _freeze_json(value: JsonValue) -> JsonValue:
+    """Recursively copy JSON data accepted at an immutable domain boundary."""
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {key: _freeze_json(item) for key, item in value.items()}
+        )
+    if isinstance(value, (tuple, list)):
+        return tuple(_freeze_json(item) for item in value)
+    return value
 
 
 def _nonempty(value: str, name: str) -> None:
@@ -117,8 +129,13 @@ class StateRef:
     def __post_init__(self) -> None:
         _nonempty(self.owner, "state owner")
         _nonempty(self.value, "state value")
-        if self.digest is not None and len(self.digest) != 64:
+        if self.digest is not None and (
+            len(self.digest) != 64
+            or any(char not in "0123456789abcdef" for char in self.digest)
+        ):
             raise ContractError("state digest must be a SHA-256 digest when supplied")
+        if not isinstance(self.restorable, bool):
+            raise ContractError("state restorable must be a boolean")
 
 
 @dataclass(frozen=True, slots=True)
@@ -440,6 +457,8 @@ class Event:
             _nonempty(value, name)
         if self.sequence < 1 or self.objective_version < 1:
             raise ContractError("event sequence and objective_version must be positive")
+        if self.schema_version != SCHEMA_VERSION:
+            raise ContractError("unsupported event schema_version")
         object.__setattr__(self, "payload", frozen_mapping(self.payload))
 
 

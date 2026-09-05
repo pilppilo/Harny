@@ -109,7 +109,8 @@ class SqliteJournal:
     def _is_duplicate_batch(self, batch: tuple[Event, ...]) -> bool:
         """Recognize an exact redelivery without accepting conflicting ID reuse."""
         rows = self._connection.execute(
-            "SELECT event_id, session_id, sequence, kind, objective_version, payload "
+            "SELECT event_id, session_id, sequence, kind, schema_version, "
+            "objective_version, payload, recorded_at, causation_id, correlation_id "
             f"FROM events WHERE event_id IN ({','.join('?' for _ in batch)})",
             tuple(event.event_id for event in batch),
         ).fetchall()
@@ -125,8 +126,12 @@ class SqliteJournal:
                 event.session_id,
                 event.sequence,
                 event.kind,
+                event.schema_version,
                 event.objective_version,
                 canonical_json(event.payload),
+                event.recorded_at,
+                event.causation_id,
+                event.correlation_id,
             )
             if row != expected:
                 raise IntegrityError("event ID was reused with different content")
@@ -204,4 +209,11 @@ class SqliteJournal:
                     ON events(session_id, correlation_id, sequence);
                 CREATE INDEX IF NOT EXISTS events_by_kind
                     ON events(session_id, kind, sequence);
+                CREATE TABLE IF NOT EXISTS artifacts (
+                    digest TEXT PRIMARY KEY,
+                    size INTEGER NOT NULL,
+                    media_type TEXT NOT NULL,
+                    provenance TEXT NOT NULL,
+                    recorded_at TEXT NOT NULL
+                );
                 """)
