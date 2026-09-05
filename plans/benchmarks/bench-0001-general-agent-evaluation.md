@@ -6,7 +6,7 @@ status: accepted
 owners: []
 created: 2026-09-04
 updated: 2026-09-04
-depends_on: [ARCH-0001, ADR-0001, ADR-0002, ADR-0003, ADR-0004]
+depends_on: [ARCH-0001, ADR-0001, ADR-0002, ADR-0003, ADR-0004, ADR-0005]
 supersedes: []
 related: [ROAD-0001, PHASE-0001, PHASE-0002, PHASE-0003, PHASE-0004]
 ---
@@ -20,11 +20,38 @@ recover, use feedback, and collaborate with an operator across distinct external
 environments. It evaluates product capability, efficiency, quality, and
 reliability; it does not define authorization or recreate external scoring.
 
+Vharness must become strong at software work, Gymnasium, ARC-AGI-3, and
+operator-authorized Hack The Box assessment. These are demanding, complementary
+capability instruments that guide engineering; they are not separate products or
+permission to specialize the core. A successful result supports only the named
+capability rung and conditions actually tested.
+
 The generality claim requires the same built artifact, agent prompt policy,
-memory/context algorithms, supervisor logic, and default thresholds. Only the
+memory/context algorithms, and versioned supervisor policy. Only the
 environment contract, task input, action schema, model endpoint credentials,
 and run budgets may vary. Any other variance is reported and invalidates a
 strict cross-domain comparison.
+
+## Capability ladder
+
+The ladder orders engineering evidence by the system demands it introduces; it
+does not claim that every task in a later family is universally harder than every
+task in an earlier family.
+
+| Rung | Environment family | Capability stressed | Advancement evidence |
+| --- | --- | --- | --- |
+| 0 | Deterministic internal fixtures | Contract validity, durability, reconciliation, replay, objective changes | PHASE-0001 exit evidence |
+| 1 | Software and evidence-driven tasks | Multi-action investigation, candidate lineage, external correctness, knowledge use | Predeclared software campaign target |
+| 2 | Gymnasium | Sequential control, compact state/action contracts, delayed reward, termination handling, efficiency | Predeclared native return/completion and action-efficiency targets |
+| 3 | ARC-AGI-3 | Interactive goal/rule discovery, hypothesis revision, memory, action efficiency, recovery from wrong theories | Official completion and efficiency targets |
+| 4 | Hack The Box | Long-horizon authorized recon and assessment, partial observations, diverse tools, recovery, operator collaboration | Operator-selected campaign with externally validated outcomes and declared efficiency/quality targets |
+
+Each rung begins with contract smoke tests, then a recorded baseline, then a
+target campaign. Before seeing target results, its campaign manifest freezes the
+suite/tasks, versions, model/settings, budgets, repetitions, native metrics,
+target values, regression tolerances, and assistance classification. Earlier
+rungs continue as regression coverage. Intermediate releases may state achieved
+rungs; broad Vharness Next capability requires the complete current ladder.
 
 ## External environment and scoring authority
 
@@ -75,11 +102,12 @@ dataset split or machine identity, seed when supported, model identifier, agent
 configuration digest, and external evaluator version. Secrets and credentials
 are referenced, never copied into the manifest.
 
-PHASE-0002 starts with small deterministic fixtures and at least one discrete
-and one continuous/control Gymnasium environment. PHASE-0004 selects the full
-publicly available ARC-AGI-3 set/toolkit, a representative Gymnasium suite,
-operator-selected HTB labs, and a pinned software-task suite. The exact set is
-frozen in the run manifest rather than prematurely fixed in this architecture.
+PHASE-0002 starts with small deterministic software fixtures and at least one
+discrete and one continuous/control Gymnasium environment. PHASE-0004 freezes a
+pinned software-task suite, representative Gymnasium suite, the available
+official ARC-AGI-3 set/toolkit, and operator-selected HTB labs. Exact tasks and
+numeric targets belong in predeclared campaign manifests because external suites
+and the product baseline evolve; they are never chosen after viewing results.
 
 ## Contamination and memory boundaries
 
@@ -139,11 +167,18 @@ may use fewer repetitions only when cost and confidence limits are disclosed.
 Pair baseline and candidate runs by task and seed. Do not average unlike native
 scores into a single synthetic capability number.
 
-The cross-domain generality gate is satisfied only when the candidate improves
-a named architectural metric or domain result without a material regression in
-completion, cost, or reliability on the other available families. Release
-judgment uses the external results and raw evidence; Vharness does not implement
-an internal meta-grader.
+Every campaign predeclares what counts as improvement, equivalence, and material
+regression for each native completion, efficiency, cost, and reliability metric,
+including how uncertainty and missing/censored runs are handled. If evidence is
+too weak for the declared comparison, the result is inconclusive rather than a
+pass. Hard correctness, duplicate-effect, or recovery-integrity failures remain
+visible regardless of aggregate performance.
+
+Advancing a rung requires its external results to meet the predeclared target
+without an undisclosed material regression on previously achieved rungs. This is
+an engineering maturity and capability-claim rule, not a Vharness runtime gate or
+local meta-grader. No individual benchmark score defines whether the product may
+exist or ship; releases identify the capability rungs they have actually earned.
 
 ## Required evidence
 
@@ -156,9 +191,11 @@ to replay projections and independently reproduce aggregate tables.
 Phase verification uses this progression:
 
 - PHASE-0001: contract, journal, crash, replay, and indeterminate-action tests.
-- PHASE-0002: bounded end-to-end tasks and operator steering/resume evidence.
-- PHASE-0003: seeded stagnation, supervision, recovery, and lineage comparisons.
-- PHASE-0004: pinned external cross-domain runs and paired baseline comparison.
+- PHASE-0002: bounded software/Gym tasks and operator steering/resume evidence.
+- PHASE-0003: seeded stagnation, supervision, recovery, and lineage comparisons
+  with predeclared tolerances and benefit/harm reporting across the paired sample.
+- PHASE-0004: advance rungs 1-4 through pinned external campaigns, retaining
+  earlier achieved rungs as regression coverage.
 
 ## Invalid comparisons
 

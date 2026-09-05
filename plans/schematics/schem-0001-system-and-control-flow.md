@@ -6,14 +6,14 @@ status: current
 owners: []
 created: 2026-09-04
 updated: 2026-09-04
-depends_on: [ARCH-0001, ADR-0001, ADR-0002, ADR-0003, ADR-0004]
+depends_on: [ARCH-0001, ADR-0001, ADR-0002, ADR-0003, ADR-0004, ADR-0005]
 supersedes: []
 related: [ROAD-0001, PHASE-0001, PHASE-0002, PHASE-0003, PHASE-0004]
 ---
 
 # Vharness Next system and control flow
 
-This cross-document view represents ARCH-0001 and ADR-0001 through ADR-0004.
+This cross-document view represents ARCH-0001 and ADR-0001 through ADR-0005.
 Arrows crossing the runtime boundary are proposals and receipts, never direct
 Vharness execution authority.
 
@@ -21,6 +21,7 @@ Vharness execution authority.
 flowchart TB
     Human[Human operator] -->|durable messages and controls| UI[Interaction surface]
     UI --> Coordinator[Session coordinator]
+    Coordinator --> Objective[Versioned objective]
     Coordinator --> Journal[(Append-only event journal)]
     Journal --> Projections[Rebuildable memory projections]
     Projections --> Context[Deterministic context assembler]
@@ -32,14 +33,16 @@ flowchart TB
     Supervisor -->|guidance event; no tools| Coordinator
     Journal --> Attempts[All variation attempts]
     Journal --> Lineage[Externally accepted single lineage]
-    Attempts -->|externally accepted evaluation only| Lineage
+    Attempts --> Promotion[Applicability and stale-head check]
+    Promotion -->|current externally accepted evaluation only| Lineage
 
     Coordinator -->|ActionProposal| Runtime[External controlled runtime]
     Runtime -->|ExecutionReceipt| Coordinator
     Runtime --> Environment[External environment or target]
     Environment -->|Observation| Coordinator
     Coordinator -->|evaluation request| Evaluator[External evaluator]
-    Evaluator -->|EvaluationReceipt| Coordinator
+    Evaluator -->|authoritative EvaluationReceipt| Coordinator
+    Coordinator --> Promotion
 
     RuntimeBoundary{{identity / policy / credentials / isolation / execution}}
     Runtime --- RuntimeBoundary

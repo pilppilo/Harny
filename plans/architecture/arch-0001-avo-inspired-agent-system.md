@@ -6,7 +6,7 @@ status: accepted
 owners: []
 created: 2026-09-04
 updated: 2026-09-04
-depends_on: [ADR-0001, ADR-0002, ADR-0003, ADR-0004]
+depends_on: [ADR-0001, ADR-0002, ADR-0003, ADR-0004, ADR-0005]
 supersedes: []
 related: [ROAD-0001, BENCH-0001, SCHEM-0001, PHASE-0001, PHASE-0002, PHASE-0003, PHASE-0004]
 ---
@@ -35,6 +35,8 @@ does not claim fidelity to unpublished implementation details.
 - Detect loops and regressions early enough to redirect rather than burn budget.
 - Let a human monitor, converse, steer, pause, resume, and stop at any time.
 - Measure capability and efficiency using externally authoritative results.
+- Climb the software, Gymnasium, ARC-AGI-3, and authorized-assessment
+  capability ladder without changing the core by benchmark identity.
 - Remain simple enough to test deterministically and inspect after failure.
 
 ## Non-goals
@@ -45,6 +47,7 @@ does not claim fidelity to unpublished implementation details.
   enforcement boundary.
 - Replacing environment lifecycle, audit, scoring, or validation systems.
 - Creating benchmark-specific agent profiles or hidden benchmark strategies.
+- Treating a benchmark name or aggregate score as the product's identity.
 - Migrating historical runs or deleting the current implementation in the
   initial phases.
 
@@ -145,24 +148,32 @@ reset, or control the environment.
 Contracts are versioned JSON-compatible records. Python uses frozen dataclasses,
 enums, and `typing.Protocol` at process boundaries; canonical JSON is used for
 persistence and external transport. Unknown fields are retained on ingest,
-required fields are validated, and schema versions are explicit.
+required fields are validated, and schema versions are explicit. Every envelope
+that can affect work includes `session_id`, `objective_version`, stable identity,
+causal parent IDs, timestamp, and provenance. Runtime identity and effect
+guarantees come from trusted connector/runtime configuration, never model text.
 
 | Contract | Required meaning |
 | --- | --- |
-| `TaskSpec` | `task_id`, objective, success evidence requested, budgets, environment identity, initial observation references, knowledge-source references, and evaluation-contract reference |
-| `ActionSpace` | Named actions with argument schemas and environment-provided descriptions |
+| `TaskSpec` | `task_id`, `objective_version`, objective, constraints, success evidence requested, finite/ongoing completion mode, budgets, environment identity, initial observations, knowledge sources, and evaluation contract |
+| `ActionSpace` | Named actions with argument schemas plus trusted cancellation, idempotency, reconciliation, snapshot, and revision semantics |
 | `EvaluationContract` | External evaluator identity; hard-constraint and objective names; objective directions; native comparison/acceptance semantics; and version |
 | `Observation` | Source, sequence/cursor, typed content or artifact references, and external timestamp/metadata |
-| `ActionProposal` | Proposal ID, session ID, action name, validated arguments, expected observable outcome, concise rationale, and context event cursor |
-| `ExecutionReceipt` | Proposal ID, external operation ID if any, status, outputs/artifact references, error, timing, and raw receipt reference |
+| `ActionProposal` | Proposal ID, objective version, action name/arguments, expected state revision and observable outcome, deadline, resource reservation, idempotency key when supported, concise rationale, and context cursor |
+| `ExecutionReceipt` | Proposal and objective IDs, external operation/revision, status, outputs/artifacts, measured usage, error, timing, and raw receipt reference |
 | `KnowledgeSource` | Source ID, description, version/provenance, access reference, and content type for agent-directed consultation |
 | `StateRef` | Opaque external or workspace state identity, content digest when available, and whether the external system declares it restorable |
 | `Attempt` | Attempt ID, base committed-node ID, starting state reference, event range, status, and resulting state/evaluation references |
-| `EvaluationReceipt` | External evaluator identity; evaluated state and baseline IDs; hard constraint results; objective vector; improved/equivalent/regressed/incomparable comparison; external acceptance; evidence; and raw receipt reference |
+| `Investigation` | Optional grouping of a question, zero or more hypotheses, attempts/actions/evidence, remaining uncertainty, usage references, and active/paused/concluded/abandoned disposition |
+| `ProgressClaim` | Outcome or knowledge progress with before/after condition, scope, evidence IDs, assessor provenance, and pending/supported/rejected/stale status |
+| `RecoveryEvent` | Interrupted operation, reconciliation evidence, restored local state reference, duration, and outcome; operational health rather than productive progress |
+| `EvaluationReceipt` | Evaluator and objective versions; evaluated state/hash and baseline IDs; hard constraints; objective vector; comparison; external acceptance; evidence; and raw receipt reference |
+| `PromotionRequest` | Evaluated state/hash, evaluation IDs, objective version, and expected current lineage head; returns accepted/rejected/incomparable/stale without regrading |
 | `OperatorCommand` | Command ID and one of message, steer, pause, resume, stop, checkpoint, or request-evaluation with optional reason |
 | `Guidance` | Trigger evidence, supervisor diagnosis, constraints, suggested experiments, and expiry/cooldown |
-| `Checkpoint` | Journal cursor, projection versions/hashes, pending proposal IDs, budgets, and active controls |
+| `Checkpoint` | Objective version, journal cursor, projection versions/hashes, pending proposal IDs, reserved/remaining budgets, and active controls |
 | `CommittedNode` | Node ID, single parent ID, accepted state reference, change summary, evaluation receipt ID, objective vector, and commit time |
+| `AlternativeRetention` | Optional artifact identity, retention reason, supporting evidence, availability, attributable bytes, and review/expiry condition |
 
 Execution receipt status is one of `accepted`, `rejected`, `running`,
 `succeeded`, `failed`, or `indeterminate`. Acceptance means only that the
@@ -176,6 +187,9 @@ Use one SQLite database per workspace with WAL mode, foreign keys, and a unique
 `events`, and `artifacts`; typed projections may be tables or views once their
 queries require it. Large/binary payloads live in a content-addressed artifact
 directory and are referenced by SHA-256, size, media type, and provenance.
+Publish an artifact by writing a temporary file, verifying its hash, and
+atomically renaming it before an event commits its reference. Missing or corrupt
+required evidence blocks dependent promotion.
 
 An event contains `event_id`, `session_id`, monotonic sequence, kind, schema
 version, recorded time, optional causation/correlation IDs, and canonical JSON
@@ -186,6 +200,9 @@ Memory projections are deliberately distinct:
 
 - **Working:** objective, current plan, controls, budgets, pending actions, and
   unresolved questions needed on the next step.
+- **Investigations:** lightweight, overlapping work groups for questions and
+  evidence. They do not require a hypothesis, candidate, fixed sequence, or
+  successful conclusion.
 - **Episodic:** compact spans of actions, observations, outcomes, and turning
   points with links to their source event ranges.
 - **Knowledge:** evidence-backed facts, hypotheses, contradictions, confidence,
@@ -194,31 +211,50 @@ Memory projections are deliberately distinct:
   state, including failed and non-improving work.
 - **Lineage:** the ordered single-parent sequence of externally accepted states
   and their evaluation vectors. It excludes unsuccessful attempts.
+- **Progress:** evidence-backed outcome and knowledge claims. Recovery and raw
+  activity remain separate operational signals.
+
+Failed-attempt metadata and lessons remain searchable, but retaining every large
+failed artifact is unnecessary. Accepted states, pending effects, and evidence
+required by unresolved or accepted claims are protected roots. Other artifacts
+are retained only for a recorded tradeoff, unresolved hypothesis, or high
+reproduction cost and may expire under a byte budget while their identity,
+lesson, and availability status remain durable.
 
 No vector database is required initially. SQLite FTS5, structured filters, and
 deterministic scoring are sufficient until BENCH-0001 shows a retrieval ceiling.
 
 ## Control flow
 
-A session moves through `created`, `running`, `paused`, `stopping`, then one of
-`completed`, `failed`, or `stopped`. External evaluation can support completion;
-only the coordinator commits the state transition.
+A session moves through `created`, `running`, `waiting`, `paused`, `stopping`,
+then one of `completed`, `failed`, or `stopped`. Waiting names a specific external
+condition and does not imply completion or new authority. External evaluation can
+support completion; only the coordinator commits the local state transition.
 
 For each step, the coordinator:
 
 1. Persists queued receipts and operator commands, then refreshes projections.
+   A steering command that changes intent or acceptance creates a new objective
+   version rather than rewriting prior work.
 2. Applies pause/stop controls before any model call or proposal dispatch.
-3. Ensures an active attempt is anchored to the latest committed node, then
+3. Ensures an active attempt is anchored to the latest committed node under the
+   current objective version, then
    builds context and journals its manifest of selected event/item IDs.
 4. Invokes the model through the existing model boundary for one typed result.
-5. Validates shape, action name, arguments, budgets, and stale context cursor.
-6. Journals an accepted result; invalid results become observations for repair.
-7. Sends an action proposal to the external runtime or applies a cognitive
+5. Validates shape, action name, arguments, trusted connector semantics, budgets,
+   expected revision, objective version, and stale context cursor.
+6. Reserves the declared resource bound and journals intent transactionally;
+   invalid or unaffordable results become observations for repair.
+7. Sends an action proposal outside the database transaction to the external
+   runtime or applies a cognitive
    update/query locally as a new event. Lineage and knowledge queries return
    referenced records through the next context without external effects.
-8. Persists returned receipts before interpreting them.
-9. On evaluation, commits a successor only when the external receipt accepts the
-   evaluated state; otherwise the attempt continues or closes unsuccessfully.
+8. Persists returned receipts and measured usage, reconciling reservations even
+   on error, before interpreting them.
+9. On evaluation, verifies objective version, evaluated state/hash, evaluator
+   version, baseline, and expected lineage head. It commits a successor only when
+   the externally accepted receipt is applicable and current; otherwise the
+   attempt continues, closes unsuccessfully, or records a stale/incomparable result.
 10. Updates progress signals, requests supervision if triggered, and checkpoints
     at an external terminal receipt, operator control, committed successor, or
     configured event span.
@@ -227,6 +263,12 @@ One attempt may traverse the loop many times. The coordinator does not require
 planning, implementation, evaluation, and bug-fixing to occur once or in a
 fixed order. The agent controls their order and decides when to call the
 external evaluation function, which is central to the AVO operator.
+
+Late receipts retain their original proposal, objective, state, and causal
+identity. They remain evidence but cannot advance a newer objective or lineage
+head. Finite objectives complete only from current external evidence. Ongoing
+objectives checkpoint between waits and require an explicit current end condition;
+a scheduler wakeup alone is not progress, permission, or completion.
 
 The coordinator permits at most one unresolved state-changing proposal per
 session in the initial implementation. This makes crash recovery and causal
@@ -237,7 +279,7 @@ new decision.
 
 Context has a hard token budget and three bands:
 
-1. **Mandatory:** task, environment/action contract, latest operator direction,
+1. **Mandatory:** current objective version, environment/action contract, latest operator direction,
    knowledge/evaluation contracts, committed-lineage head, active attempt,
    active budgets, pending action, current plan, and latest receipt.
 2. **Retrieved:** unresolved hypotheses, relevant evidence, prior failures, and
@@ -259,11 +301,14 @@ rewrite or delete source events.
 ## Progress, supervision, and variation
 
 The monitor maintains rolling signals rather than asking a model whether it is
-stuck. Positive signals include new external score, newly satisfied evidence,
-resolved hypotheses, newly reachable state, and a new committed improvement.
-Negative signals include repeated normalized actions, repeated failure
-fingerprints, no positive signal over a step window, evaluation regression, and
-budget burn without new observations.
+stuck. Outcome progress is externally supported improvement or a newly satisfied
+acceptance clause under the current objective. Knowledge progress is evidence
+that resolves a named uncertainty, refutes an explanation, or changes a scoped
+hypothesis. Recovery records continuity and reliability separately. Pending or
+self-reported claims, new logs, tool-call counts, and repeated recovery do not
+reset stagnation. Negative signals include repeated normalized actions or
+evidence, recurring failure fingerprints, evaluation regression, and budget burn
+without supported outcome or knowledge progress.
 
 A plateau alone is not failure: the paper's trajectory shows discrete jumps,
 long searches between commits, and diminishing returns. Repetition and absence
@@ -291,7 +336,8 @@ deferred, as they were outside the paper's evaluated single-lineage setting.
 On startup, replay events through the checkpoint cursor, verify projection
 hashes, rebuild mismatches, and enumerate pending proposals. Query the external
 runtime for each pending proposal ID when reconciliation is available. Persist
-the returned receipt before continuing. If completion cannot be determined,
+the returned receipt and reconcile its resource reservation before continuing.
+If completion cannot be determined,
 mark the proposal `indeterminate`, expose it to the operator and agent, and do
 not resend it automatically.
 
@@ -300,6 +346,9 @@ unavailability, and supervisor failure are typed events with bounded retry
 budgets. Retries must either be safe reads or use the same externally supported
 idempotency key. SQLite corruption or artifact hash mismatch stops the session
 with diagnostic evidence rather than continuing from uncertain state.
+Cancellation may stop waiting but cannot be assumed to undo an external effect.
+A late result cannot complete or promote work under a different objective version
+or lineage head.
 
 ## Performance and scaling assumptions
 
@@ -309,6 +358,9 @@ Projection updates should be incremental, context queries indexed, and artifact
 content loaded only when selected. Record model calls, tokens, local selection
 time, external action count, wall time, supervisor calls, attempts, evaluations,
 commits, and time/actions between commits from day one.
+Resource records distinguish reserved from measured usage, cumulative quantities
+from peaks, and fresh/cached/output tokens. Unknown provider cost is reported as
+unknown rather than zero.
 
 Add concurrency, embeddings, remote state, or a workflow engine only when a
 repeatable benchmark demonstrates that the simple design is the limiting factor.

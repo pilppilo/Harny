@@ -6,7 +6,7 @@ status: accepted
 owners: []
 created: 2026-09-04
 updated: 2026-09-04
-depends_on: [ARCH-0001, ADR-0001, ADR-0002, ADR-0003, ADR-0004, BENCH-0001]
+depends_on: [ARCH-0001, ADR-0001, ADR-0002, ADR-0003, ADR-0004, ADR-0005, BENCH-0001]
 supersedes: []
 related: [PHASE-0001, PHASE-0002, PHASE-0003, PHASE-0004]
 ---
@@ -19,10 +19,12 @@ Vharness Next is a resumable, human-steerable agent system that makes
 measurable long-horizon progress through external tools and feedback. One
 agent architecture operates across authorized recon and assessment,
 interactive reasoning, Gymnasium control tasks, and software work.
+It must become strong at the software, Gymnasium, ARC-AGI-3, and authorized HTB
+capability rungs without making any benchmark the product's identity.
 
 ## Governing architecture and decisions
 
-ARCH-0001 defines the system. ADR-0001 through ADR-0004 fix the core direction.
+ARCH-0001 defines the system. ADR-0001 through ADR-0005 fix the core direction.
 BENCH-0001 defines evidence required to claim progress. Inherited plans are
 reference material only, as classified by `plans/README.md`.
 
@@ -41,6 +43,8 @@ component is presumed reusable until PHASE-0001 maps it to an accepted contract.
 4. Add algorithmic complexity only after benchmark or failure evidence.
 5. Preserve an executable vertical slice at each phase boundary.
 6. Compare the same agent core across environments; change only adapters.
+7. Use benchmark rungs to drive transferable improvements and label intermediate
+   capability honestly rather than hiding gaps behind one aggregate score.
 
 ## Ordered phases
 
@@ -68,16 +72,18 @@ PHASE-0001 uses contract, attempt/commit, and crash/replay tests. PHASE-0002 add
 small deterministic Gymnasium and software fixtures plus agent-directed access
 to lineage, knowledge, and evaluation. PHASE-0003 experimentally selects
 supervision policy and adds seeded plateau, stagnation, and recovery trials.
-PHASE-0004 runs the externally owned suites in BENCH-0001 and publishes raw
-receipts plus aggregate results.
+PHASE-0004 advances the software, Gymnasium, ARC-AGI-3, and authorized HTB rungs
+in BENCH-0001, retaining earlier rungs as regression coverage and publishing raw
+receipts plus per-rung results.
 
 ## Compatibility and migration strategy
 
 Build the new kernel alongside the current entry points. Reuse existing code
 only behind an accepted contract. Do not perform a broad rewrite or migrate
-historical session state. Once PHASE-0004 is verified, make the new kernel the
-default through one reversible entry-point change; removal of the old path is
-a later explicit phase.
+historical session state. Intermediate releases identify the capability rungs
+actually demonstrated. Once PHASE-0004 is verified, make the new kernel the
+default through one reversible entry-point change; removal of the old path is a
+later explicit phase.
 
 ## Risks and decision points
 
@@ -90,7 +96,8 @@ measured ceiling requires them.
 
 ## Completion definition
 
-The redesign is complete when every phase is verified, the same core passes
-BENCH-0001's generality gate, sessions resume after injected failures without
-duplicate effects, the operator can inspect and steer live work, and the
-external runtime/evaluator boundary is demonstrated rather than assumed.
+The redesign is complete when every phase is verified, the same core achieves
+BENCH-0001's complete current capability ladder at predeclared targets, sessions
+resume after injected failures without duplicate effects, the operator can
+inspect and steer live work, and the external runtime/evaluator boundary is
+demonstrated rather than assumed.

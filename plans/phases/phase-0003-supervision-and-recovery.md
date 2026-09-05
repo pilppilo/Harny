@@ -1,6 +1,6 @@
 ---
 id: PHASE-0003
-title: Add progress supervision recovery and lineage
+title: Add progress supervision and recovery
 type: phase
 status: accepted
 owners: []
@@ -11,7 +11,7 @@ supersedes: []
 related: [ARCH-0001, BENCH-0001, WORK-0001]
 ---
 
-# Add progress supervision recovery and lineage
+# Add progress supervision and recovery
 
 ## Observable outcome
 
@@ -24,8 +24,9 @@ attributable.
 ## Entrance criteria
 
 PHASE-0002 is verified with deterministic context manifests and bounded
-end-to-end evidence. Real failure traces are available to supplement seeded
-fixtures; otherwise the phase limits itself to the ARCH-0001 defaults.
+end-to-end evidence. Real failure traces supplement seeded fixtures. Before this
+phase becomes `ready`, its linked EXP must select an initial supervisor policy;
+ARCH-0001 intentionally supplies no numerical trigger defaults.
 
 ## In scope
 
@@ -49,10 +50,13 @@ autonomous rollback of external state, or domain-specific recovery policies.
 
 ## Contracts added or changed
 
-Implement `Guidance` and `ProgressSignal` from ARCH-0001. Reuse `Attempt` and
-`CommittedNode` without changing their external acceptance semantics. Add monitor
-and supervisor policy versions to run manifests. External receipts and scores
-remain the evidence; Vharness does not replace evaluation.
+Implement `Guidance` and the monitor projection over `ProgressClaim` and
+`RecoveryEvent` from ARCH-0001. Reuse `Attempt` and `CommittedNode` without
+changing their external acceptance semantics. Add monitor and supervisor policy
+versions to run manifests. External receipts and scores remain the evidence;
+Vharness does not replace evaluation. Derive monitor inputs from supported
+outcome/knowledge claims while keeping recovery, pending claims, and raw activity
+separate.
 
 ## Implementation sequence
 
@@ -89,6 +93,9 @@ duplicate external effect.
 - Guidance has no execution capability and all use is causally recorded.
 - At least one paired trial demonstrates recovery with bounded extra cost; any
   regressions and rejected guidance remain visible.
+- Across the predeclared paired sample, report supervisor benefit, harm, and
+  uncertainty against fixed tolerances; one recovery remains functional evidence,
+  not a general benefit claim.
 - Attempt history, committed parentage, changes, evaluations, and dispositions
   replay without failed attempts entering committed lineage.
 - Repeated failed recovery escalates to the operator rather than looping forever.

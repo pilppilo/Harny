@@ -8,7 +8,7 @@ created: 2026-09-04
 updated: 2026-09-04
 depends_on: []
 supersedes: []
-related: [ARCH-0001, ROAD-0001, BENCH-0001, PHASE-0001]
+related: [ARCH-0001, ROAD-0001, BENCH-0001, ADR-0005, PHASE-0001]
 ---
 
 # Vharness Next architecture and implementation workstream
@@ -83,3 +83,32 @@ Copy unresolved items forward until resolved or explicitly dropped.
   pinned `712f419` snapshot; updating Plant is independent of these plan edits.
 - **Suggested next action:** Re-run conformance checks and commit this focused
   plan tightening before PHASE-0001 implementation.
+
+## 2026-09-05 02:10 UTC — Capability ladder and Brain contract review
+
+- **Goal:** Preserve the requirement that Vharness become strong at software,
+  Gymnasium, ARC-AGI-3, and authorized HTB work while using them as benchmark
+  rungs rather than product-specific modes; adopt useful mechanics from the
+  separate Brain specification.
+- **Work completed:** Accepted ADR-0005; defined an accumulating capability
+  ladder with predeclared external targets and honest intermediate claims;
+  strengthened ARCH-0001 and PHASE-0001 with objective versions, stale-result
+  protection, trusted connector semantics, resource reservation/reconciliation,
+  atomic artifact publication, waiting, and ongoing-objective boundaries; added
+  lightweight investigations, evidence-backed progress categories, operational
+  recovery separation, and selective retention to PHASE-0002; corrected
+  PHASE-0003 supervision prerequisites and comparison claims; aligned PHASE-0004,
+  ROAD-0001, BENCH-0001, the index, and schematic.
+- **Evidence:** Comparative read of `/home/flub/brain/plans`; operator's explicit
+  clarification in this planning session; final Plant and Git validation recorded
+  by the commit workflow following this entry.
+- **Discoveries:** Benchmark performance is mandatory maturity evidence without
+  being the product identity. Objective version and expected-head checks are
+  necessary because durable human steering can make otherwise valid late results
+  stale. Recovery and activity cannot substitute for outcome or knowledge
+  progress.
+- **Open questions:** Exact per-rung suites, numeric targets, and tolerances are
+  frozen in campaign manifests before results. They do not block PHASE-0001.
+- **Suggested next action:** Validate and commit this plan revision, then begin
+  PHASE-0001 from the revised contracts. Keep selective models, challengers, and
+  offline harness evolution out until baseline evidence supports experiments.

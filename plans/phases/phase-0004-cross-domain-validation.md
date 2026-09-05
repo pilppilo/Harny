@@ -1,6 +1,6 @@
 ---
 id: PHASE-0004
-title: Validate the unchanged core across target environments
+title: Advance the unchanged core through the capability ladder
 type: phase
 status: accepted
 owners: []
@@ -11,21 +11,23 @@ supersedes: []
 related: [ARCH-0001, BENCH-0001, WORK-0001]
 ---
 
-# Validate the unchanged core across target environments
+# Advance the unchanged core through the capability ladder
 
 ## Observable outcome
 
-Pinned external runs demonstrate that the same Vharness kernel, memory/context
-algorithms, supervision, and operator model can make efficient progress on
-Gymnasium, ARC-AGI-3, operator-authorized Hack The Box labs, and software tasks.
-Raw external receipts support every reported result.
+Pinned external campaigns advance the same Vharness kernel, memory/context
+algorithms, supervision, and operator model through the software, Gymnasium,
+ARC-AGI-3, and operator-authorized Hack The Box capability rungs. Each achieved
+rung meets its predeclared target and retains regression evidence for earlier
+rungs. Raw external receipts support every reported result.
 
 ## Entrance criteria
 
 PHASE-0003 is verified. BENCH-0001 metrics are emitted automatically. The
 operator has selected and independently authorized any HTB labs and configured
-the external runtime. Versions, tasks, budgets, and seeds are frozen in run
-manifests before scored runs.
+the external runtime. Versions, tasks, model/settings, budgets, seeds,
+repetitions, targets, comparison tolerances, and assistance labels are frozen in
+campaign manifests before scored runs.
 
 ## In scope
 
@@ -33,8 +35,8 @@ manifests before scored runs.
 - Contract conformance tests proving adapters do not change kernel policy.
 - Paired baseline/current runs, repetitions, failure injection, and cost reports.
 - Operator-assisted versus autonomous outcome labeling.
-- Cross-domain regression analysis and a release recommendation based on the
-  external evidence.
+- Per-rung capability conclusions, cross-domain regression analysis, and honest
+  milestone recommendations based on external evidence.
 - A reversible switch making the new kernel the default only after verification.
 
 ## Out of scope
@@ -52,16 +54,18 @@ in its run manifest.
 
 ## Implementation sequence
 
-1. Freeze suites, versions, budgets, seeds, baseline, and evidence locations.
-2. Implement the smallest conforming Gymnasium and ARC integrations.
-3. Connect software-task evaluation through its existing external command path.
+1. Freeze each rung's suite, versions, settings, budgets, seeds, repetitions,
+   baseline, targets, tolerances, assistance labels, and evidence locations.
+2. Connect software-task evaluation through its existing external command path.
+3. Implement the smallest conforming Gymnasium and ARC integrations.
 4. Connect operator-provided HTB observations/actions to the external runtime;
    leave lifecycle and validation with HTB/operator systems.
 5. Run smoke tests, then the paired/repeated BENCH-0001 matrix.
 6. Analyze completion, efficiency, reliability, recovery, and human intervention.
 7. Fix general defects or create explicit experiments; do not tune hidden per-
    environment policy.
-8. Verify evidence and switch the default entry point reversibly if gates pass.
+8. Verify evidence, publish achieved/remaining rungs, and switch the default entry
+   point reversibly after the full phase exit and operator decision.
 
 ## Compatibility and migration
 
@@ -79,10 +83,12 @@ effects.
 
 ## Exit criteria and required evidence
 
-- All four environment families have externally supported completion evidence.
+- All four target environment families meet their predeclared capability targets;
+  otherwise the unmet rung and evidence remain explicit and the phase is not
+  represented as fully verified.
 - Run manifests prove unchanged core/prompt/algorithms across families.
 - Efficiency, reliability, recovery, and human-intervention results satisfy
-  BENCH-0001 reporting and show no undisclosed material regression.
+  BENCH-0001 reporting, predeclared tolerances, and regression coverage.
 - No adapter contains agent planning, scoring imitation, authorization, target
   lifecycle, or benchmark-specific behavioral prompts.
 - Raw evidence and reproducible aggregate calculations receive independent
@@ -95,4 +101,3 @@ External services, costs, and environment changes can make runs incomparable.
 Invalidate and rerun only affected cells with a new manifest; never merge them
 silently. A weak domain result is evidence for a general algorithm experiment,
 not permission to add a hidden benchmark profile.
-

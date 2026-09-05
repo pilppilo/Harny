@@ -14,7 +14,7 @@ current direction from inherited plans.
 ## Current focus
 
 - **Now:** PHASE-0001 — ready.
-- **Read:** ARCH-0001, ADR-0001, ADR-0002, ADR-0003, ADR-0004, ROAD-0001, BENCH-0001.
+- **Read:** ARCH-0001, ADR-0001, ADR-0002, ADR-0003, ADR-0004, ADR-0005, ROAD-0001, BENCH-0001.
 - **Workstream:** WORK-0001.
 - **Next:** PHASE-0002.
 - **Blocked:** None.
@@ -39,12 +39,13 @@ None.
 | ADR-0002 | accepted | Keep execution enforcement and authoritative validation outside Vharness | — |
 | ADR-0003 | accepted | Use environment contracts, not benchmark-specific behavioral profiles | — |
 | ADR-0004 | accepted | Make the human operator a durable, first-class participant | — |
+| ADR-0005 | accepted | Use benchmark families as a capability engineering ladder | — |
 
 ## Delivery order
 
 | Order | ID | Status | Depends on | Outcome |
 | --- | --- | --- | --- | --- |
-| 1 | PHASE-0001 | ready | ARCH-0001, ROAD-0001, BENCH-0001, ADR-0001..0004 | Resumable session kernel, attempt history, committed lineage, and external contracts |
+| 1 | PHASE-0001 | ready | ARCH-0001, ROAD-0001, BENCH-0001, ADR-0001..0005 | Resumable session kernel, attempt history, committed lineage, and external contracts |
 | 2 | PHASE-0002 | accepted | PHASE-0001 | Autonomous variation loop, memory, context, and live human interaction |
 | 3 | PHASE-0003 | accepted | PHASE-0002 | Evidence-selected supervision and recovery |
 | 4 | PHASE-0004 | accepted | PHASE-0003 | Cross-domain evidence from unchanged agent machinery |

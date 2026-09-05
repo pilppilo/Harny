@@ -39,6 +39,12 @@ linked from WORK-0001. BENCH-0001 run-manifest fields are available.
   knowledge sources, and prior attempt evidence in addition to automatic context.
 - A single-lineage autonomous variation loop supporting multiple actions and
   evaluations before externally accepted commit or unsuccessful closure.
+- Lightweight, overlapping `Investigation` groups that may begin without a
+  hypothesis or candidate and may pause, conclude, abandon, or reopen by event.
+- Evidence-backed `ProgressClaim` records separating outcome progress from
+  knowledge progress, with recovery retained as operational health only.
+- Selective failed-artifact retention under a byte budget while protecting
+  accepted states, pending effects, and evidence required by active claims.
 - Deterministic context bands, ranking, de-duplication, and context manifests.
 - Token/action/time budgets enforced as coordinator scheduling limits.
 - A live operator surface showing objective, plan, action/receipt stream, current
@@ -58,18 +64,21 @@ Add the typed `AgentResult` union, including explicit lineage and knowledge
 queries, plus projection/context manifest versions. Do not change external action,
 state-reference, evaluation, or receipt semantics from PHASE-0001. Gymnasium is
 an environment adapter around official reset/step values, not an agent profile.
+Add `Investigation`, `ProgressClaim`, `RecoveryEvent`, and `AlternativeRetention`
+as projections over the journal rather than independent workflow engines.
 
 ## Implementation sequence
 
 1. Connect typed model results to the coordinator using a scripted model first.
 2. Implement working/knowledge projections and explicit hypothesis transitions.
 3. Add agent-directed lineage/knowledge lookup with provenance-preserving results.
-4. Implement FTS5 ranking, deterministic selection, and context manifests.
-5. Add episodic compaction as derived events with source ranges.
-6. Connect a real model adapter and repair malformed outputs within a budget.
-7. Exercise free ordering of inspect, act, debug, and evaluate within attempts.
-8. Expose the live operator view and durable conversation/control path.
-9. Run the same kernel against software and Gymnasium fixtures.
+4. Add investigation grouping and distinct outcome/knowledge/recovery projections.
+5. Implement FTS5 ranking, deterministic selection, and context manifests.
+6. Add episodic compaction and selective retention with protected evidence roots.
+7. Connect a real model adapter and repair malformed outputs within a budget.
+8. Exercise free ordering of inspect, act, debug, and evaluate within attempts.
+9. Expose the live operator view and durable conversation/control path.
+10. Run the same kernel against software and Gymnasium fixtures.
 
 ## Compatibility and migration
 
@@ -88,6 +97,10 @@ plan/implement/evaluate/debug sequence and that explicit lineage/knowledge
 queries return source-linked results. End-to-end seeded runs compare fresh
 process and resumed outcomes. Benchmark evidence follows BENCH-0001 without a
 local duplicate grader.
+Additional cases cover investigation overlap without double-counting shared
+usage, abandonment/reopening, unsupported or duplicate progress claims, recovery
+that cannot reset stagnation, and optional artifact eviction without deleting
+protected/shared evidence or its retained lesson.
 
 ## Exit criteria and required evidence
 
@@ -100,6 +113,10 @@ local duplicate grader.
 - Every stored fact/hypothesis and summary resolves to source events.
 - Every model decision resolves to its visible input, output, context manifest,
   usage, and causally preceding event cursor.
+- Outcome and knowledge progress identify before/after conditions and evidence;
+  pending claims, raw activity, and recovery never count as supported progress.
+- Failed-work lessons survive replay even when an optional large artifact expires;
+  accepted and required-evidence artifacts remain protected.
 - Operator messages are visible, durable, acknowledged, and affect later context.
 - Paused sessions make no new model calls or proposal submissions.
 - Resume tests show no lost direction, duplicated effect, or projection drift.
