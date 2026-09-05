@@ -1,5 +1,8 @@
 """Validated decoding of session projection payloads at the persistence boundary."""
 
+# One branch per immutable command variant keeps durable command decoding explicit.
+# pylint: disable=too-many-return-statements
+
 from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
@@ -7,6 +10,7 @@ from typing import Mapping
 
 from .errors import IntegrityError
 from .models import (
+    ArtifactRef,
     Attempt,
     AttemptDisposition,
     BudgetLimits,
@@ -14,56 +18,41 @@ from .models import (
     CompletionMode,
     ExecutionReceipt,
     ExecutionStatus,
+    EvaluationCommand,
+    EvaluationReceipt,
+    EvaluationRequest,
+    CheckpointRequest,
+    Message,
+    OperatorCommand,
+    Pause,
     ResourceReservation,
-    SessionStatus,
+    Resume,
     StateRef,
+    Steer,
+    Stop,
     TaskSpec,
     UsageMeasurement,
 )
-from .transitions import SessionState, UsageLedger
 
 
-def state_from_snapshot(value: Mapping[str, object]) -> SessionState:
-    """Decode a persisted projection using strict primitive checks."""
-    task_data = _mapping(value, "task")
-    budgets = _mapping(task_data, "budgets")
-    task = TaskSpec(
-        _string(task_data, "task_id"),
-        _string(task_data, "objective"),
-        CompletionMode(_string(task_data, "completion_mode")),
-        _string(task_data, "success_evidence"),
+def task_from_payload(value: Mapping[str, object]) -> TaskSpec:
+    """Decode the task fact carried by session creation."""
+    budgets = _mapping(value, "budgets")
+    return TaskSpec(
+        _string(value, "task_id"),
+        _string(value, "objective"),
+        CompletionMode(_string(value, "completion_mode")),
+        _string(value, "success_evidence"),
         BudgetLimits(
             actions=_optional_int(budgets, "actions"),
             model_calls=_optional_int(budgets, "model_calls"),
             evaluations=_optional_int(budgets, "evaluations"),
             cost=_optional_decimal(budgets, "cost"),
         ),
-        _string(task_data, "environment_id"),
-        _string(task_data, "evaluation_contract_id"),
-        _integer(task_data, "objective_version"),
-        tuple(_strings(task_data.get("constraints", []), "constraints")),
-    )
-    node = _node_from(_mapping(value, "lineage_head"))
-    active_value = value.get("active_attempt")
-    active = (
-        None
-        if active_value is None
-        else _attempt_from(_mapping_value(active_value, "active_attempt"))
-    )
-    ledger_data = _mapping(value, "ledger")
-    return SessionState(
-        task,
-        SessionStatus(_string(value, "status")),
-        node,
-        active,
-        _optional_string(value, "pending_proposal_id"),
-        _optional_string(value, "wait_reason"),
-        UsageLedger(
-            _integer(ledger_data, "actions"),
-            _integer(ledger_data, "evaluations"),
-            _decimal(ledger_data, "cost"),
-            _optional_decimal(ledger_data, "unsettled_cost"),
-        ),
+        _string(value, "environment_id"),
+        _string(value, "evaluation_contract_id"),
+        _integer(value, "objective_version"),
+        tuple(_strings(value.get("constraints", []), "constraints")),
     )
 
 
@@ -95,11 +84,56 @@ def receipt_from_payload(value: Mapping[str, object]) -> ExecutionReceipt:
     )
 
 
+def evaluation_request_from_payload(value: Mapping[str, object]) -> EvaluationRequest:
+    """Decode one durable evaluation request."""
+    return EvaluationRequest(
+        _string(value, "request_id"),
+        _string(value, "session_id"),
+        _integer(value, "objective_version"),
+        _string(value, "attempt_id"),
+        state_ref_from(_mapping(value, "evaluated_state")),
+        _string(value, "baseline_node_id"),
+        _string(value, "evaluator_version"),
+    )
+
+
+def evaluation_receipt_from_payload(value: Mapping[str, object]) -> EvaluationReceipt:
+    """Decode one verified durable evaluation receipt."""
+    evidence = value.get("evidence", ())
+    if not isinstance(evidence, (list, tuple)):
+        raise IntegrityError("event payload evidence must be an array")
+    accepted = value.get("accepted")
+    if not isinstance(accepted, bool):
+        raise IntegrityError("event payload accepted must be a boolean")
+    return EvaluationReceipt(
+        _string(value, "receipt_id"),
+        _string(value, "request_id"),
+        _integer(value, "objective_version"),
+        state_ref_from(_mapping(value, "evaluated_state")),
+        _string(value, "baseline_node_id"),
+        _string(value, "evaluator_version"),
+        accepted,
+        _string(value, "comparison"),
+        _mapping_or_empty(value, "objectives"),
+        tuple(artifact_ref_from(_mapping_value(item, "evidence")) for item in evidence),
+    )
+
+
+def artifact_ref_from(value: Mapping[str, object]) -> ArtifactRef:
+    """Decode a verified artifact reference carried by an evaluation receipt."""
+    return ArtifactRef(
+        _string(value, "digest"),
+        _integer(value, "size"),
+        _string(value, "media_type"),
+        _string(value, "provenance"),
+    )
+
+
 def state_ref_from(value: Mapping[str, object]) -> StateRef:
     """Decode an opaque external state reference."""
     restorable = value.get("restorable", False)
     if not isinstance(restorable, bool):
-        raise IntegrityError("snapshot restorable must be a boolean")
+        raise IntegrityError("event payload restorable must be a boolean")
     return StateRef(
         _string(value, "owner"),
         _string(value, "value"),
@@ -120,7 +154,47 @@ def usage_from_payload(value: Mapping[str, object]) -> UsageMeasurement:
     )
 
 
-def _node_from(value: Mapping[str, object]) -> CommittedNode:
+def command_from_payload(value: Mapping[str, object]) -> OperatorCommand:
+    """Decode an admitted command while rebuilding the durable inbox."""
+    command_id = _string(value, "command_id")
+    session_id = _string(value, "session_id")
+    command_type = _string(value, "__type__") if "__type__" in value else None
+    if command_type == "Message":
+        return Message(command_id, session_id, _string(value, "text"))
+    if command_type == "Steer":
+        return Steer(
+            command_id,
+            session_id,
+            _string(value, "objective"),
+            _string(value, "success_evidence"),
+        )
+    if command_type == "Pause":
+        return Pause(command_id, session_id)
+    if command_type == "Resume":
+        return Resume(command_id, session_id)
+    if command_type == "Stop":
+        return Stop(command_id, session_id)
+    if command_type == "CheckpointRequest":
+        return CheckpointRequest(command_id, session_id)
+    if command_type == "EvaluationCommand":
+        return EvaluationCommand(
+            command_id, session_id, state_ref_from(_mapping(value, "state"))
+        )
+    raise IntegrityError("admitted command has an unsupported type")
+
+
+def string_from_payload(value: Mapping[str, object], name: str) -> str:
+    """Decode a required string from a durable event payload."""
+    return _string(value, name)
+
+
+def integer_from_payload(value: Mapping[str, object], name: str) -> int:
+    """Decode a required integer from a durable event payload."""
+    return _integer(value, name)
+
+
+def node_from_payload(value: Mapping[str, object]) -> CommittedNode:
+    """Decode a committed lineage node from its durable event payload."""
     return CommittedNode(
         _string(value, "node_id"),
         _integer(value, "objective_version"),
@@ -131,7 +205,8 @@ def _node_from(value: Mapping[str, object]) -> CommittedNode:
     )
 
 
-def _attempt_from(value: Mapping[str, object]) -> Attempt:
+def attempt_from_payload(value: Mapping[str, object]) -> Attempt:
+    """Decode an attempt fact from its durable event payload."""
     result = value.get("result_state")
     return Attempt(
         _string(value, "attempt_id"),
@@ -155,7 +230,7 @@ def _mapping(value: Mapping[str, object], name: str) -> Mapping[str, object]:
 def _mapping_value(value: object, name: str) -> Mapping[str, object]:
     """Validate a JSON object from an untyped persisted payload."""
     if not isinstance(value, Mapping):
-        raise IntegrityError(f"snapshot {name} must be an object")
+        raise IntegrityError(f"event payload {name} must be an object")
     return value
 
 
@@ -168,21 +243,21 @@ def _string(value: Mapping[str, object], name: str) -> str:
     """Extract a required string without coercion."""
     candidate = value.get(name)
     if not isinstance(candidate, str):
-        raise IntegrityError(f"snapshot {name} must be a string")
+        raise IntegrityError(f"event payload {name} must be a string")
     return candidate
 
 
 def _optional_string(value: Mapping[str, object], name: str) -> str | None:
     candidate = value.get(name)
     if candidate is not None and not isinstance(candidate, str):
-        raise IntegrityError(f"snapshot {name} must be a string or null")
+        raise IntegrityError(f"event payload {name} must be a string or null")
     return candidate
 
 
 def _integer(value: Mapping[str, object], name: str) -> int:
     candidate = value.get(name)
     if isinstance(candidate, bool) or not isinstance(candidate, int):
-        raise IntegrityError(f"snapshot {name} must be an integer")
+        raise IntegrityError(f"event payload {name} must be an integer")
     return candidate
 
 
@@ -204,12 +279,12 @@ def _parse_decimal(value: str, name: str) -> Decimal:
     try:
         return Decimal(value)
     except InvalidOperation as exc:
-        raise IntegrityError(f"snapshot {name} must be a decimal string") from exc
+        raise IntegrityError(f"event payload {name} must be a decimal string") from exc
 
 
 def _strings(value: object, name: str) -> tuple[str, ...]:
     if not isinstance(value, (list, tuple)) or not all(
         isinstance(item, str) for item in value
     ):
-        raise IntegrityError(f"snapshot {name} must be an array of strings")
+        raise IntegrityError(f"event payload {name} must be an array of strings")
     return tuple(value)

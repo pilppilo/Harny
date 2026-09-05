@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from decimal import Decimal
+from enum import Enum
 
 from .errors import TransitionError
 from .models import (
@@ -54,6 +55,7 @@ class UsageLedger:
             if self.unsettled_cost is None or reservation.cost is None
             else self.unsettled_cost + reservation.cost
         )
+
         return replace(
             self,
             actions=self.actions + reservation.actions,
@@ -76,6 +78,28 @@ class UsageLedger:
         )
 
 
+class EvaluationOperationStatus(str, Enum):
+    """Monotonic lifecycle of one externally requested evaluation."""
+
+    INTENDED = "intended"
+    INTAKE_RECORDED = "intake_recorded"
+    VERIFICATION_FAILED = "verification_failed"
+    RECEIPT_CONSUMED = "receipt_consumed"
+
+
+@dataclass(frozen=True, slots=True)
+class EvaluationOperation:
+    """Replay-owned facts for one evaluation request and its terminal handling."""
+
+    request: EvaluationRequest
+    reservation: ResourceReservation
+    status: EvaluationOperationStatus = EvaluationOperationStatus.INTENDED
+    receipt_id: str | None = None
+    raw_receipt: str | None = None
+
+
+# The projection intentionally holds each scheduling fact needed by replay.
+# pylint: disable=too-many-instance-attributes
 @dataclass(frozen=True, slots=True)
 class SessionState:
     """Small rebuildable projection needed for phase-one scheduling."""
@@ -87,6 +111,11 @@ class SessionState:
     pending_proposal_id: str | None = None
     wait_reason: str | None = None
     ledger: UsageLedger = UsageLedger()
+    action_operations: tuple[tuple[str, str, int, ResourceReservation, bool], ...] = ()
+    evaluation_operations: tuple[EvaluationOperation, ...] = ()
+    latest_evaluation: (
+        tuple[EvaluationRequest, EvaluationReceipt, PromotionDisposition] | None
+    ) = None
 
 
 def start_attempt(state: SessionState, attempt_id: str) -> SessionState:
@@ -104,6 +133,171 @@ def start_attempt(state: SessionState, attempt_id: str) -> SessionState:
         starting_state=state.lineage_head.state,
     )
     return replace(state, status=SessionStatus.RUNNING, active_attempt=attempt)
+
+
+def intend_action(
+    state: SessionState,
+    proposal_id: str,
+    attempt_id: str,
+    reservation: ResourceReservation,
+) -> SessionState:
+    """Reserve and record an action owned by the current active attempt."""
+    if state.active_attempt is None or state.active_attempt.attempt_id != attempt_id:
+        raise TransitionError("action does not belong to the active attempt")
+    if reservation.operation_id != proposal_id:
+        raise TransitionError("action reservation does not match proposal")
+    ledger = state.ledger.reserve(reservation, state.task.budgets)
+    return replace(
+        state,
+        status=SessionStatus.WAITING,
+        pending_proposal_id=proposal_id,
+        wait_reason="runtime receipt pending",
+        ledger=ledger,
+        action_operations=(
+            *state.action_operations,
+            (proposal_id, attempt_id, state.task.objective_version, reservation, False),
+        ),
+    )
+
+
+def intend_evaluation(
+    state: SessionState, request: EvaluationRequest, reservation: ResourceReservation
+) -> SessionState:
+    """Reserve and register one evaluation before external dispatch."""
+    if (
+        state.active_attempt is None
+        or state.active_attempt.attempt_id != request.attempt_id
+    ):
+        raise TransitionError("evaluation does not belong to the active attempt")
+    if reservation.operation_id != request.request_id:
+        raise TransitionError("evaluation reservation does not match request")
+    if any(
+        operation.request.request_id == request.request_id
+        for operation in state.evaluation_operations
+    ):
+        raise TransitionError("evaluation request ID is already recorded")
+    ledger = state.ledger.reserve(reservation, state.task.budgets)
+    return replace(
+        state,
+        status=SessionStatus.WAITING,
+        pending_proposal_id=request.request_id,
+        wait_reason="evaluation pending",
+        ledger=ledger,
+        evaluation_operations=(
+            *state.evaluation_operations,
+            EvaluationOperation(request, reservation),
+        ),
+    )
+
+
+def record_evaluation_intake(
+    state: SessionState, request_id: str, receipt_id: str, raw_receipt: str
+) -> SessionState:
+    """Record verified raw intake exactly once for its intended evaluation."""
+    operation = _evaluation_operation(state, request_id)
+    _require_new_intake(operation)
+    updated = replace(
+        operation,
+        status=EvaluationOperationStatus.INTAKE_RECORDED,
+        receipt_id=receipt_id,
+        raw_receipt=raw_receipt,
+    )
+    return replace(state, evaluation_operations=_replace_evaluation(state, updated))
+
+
+def fail_evaluation_verification(
+    state: SessionState, request_id: str, receipt_id: str
+) -> SessionState:
+    """Make an evidence-verification failure terminal for that evaluation."""
+    operation = _evaluation_operation(state, request_id)
+    if operation.receipt_id != receipt_id:
+        raise TransitionError("evaluation verification failure has no active intake")
+    _require_consumable(operation)
+    return _terminalize_evaluation(
+        state, operation, EvaluationOperationStatus.VERIFICATION_FAILED
+    )
+
+
+def consume_evaluation(
+    state: SessionState,
+    receipt: EvaluationReceipt,
+    disposition: PromotionDisposition,
+) -> SessionState:
+    """Consume an intake once, preserving late evidence without clearing other work."""
+    operation = _evaluation_operation(state, receipt.request_id)
+    if operation.receipt_id != receipt.receipt_id:
+        raise TransitionError("evaluation receipt does not match its verified intake")
+    _require_consumable(operation)
+    result = _terminalize_evaluation(
+        state, operation, EvaluationOperationStatus.RECEIPT_CONSUMED
+    )
+    return replace(
+        result,
+        latest_evaluation=(operation.request, receipt, disposition),
+    )
+
+
+def evaluation_operation(state: SessionState, request_id: str) -> EvaluationOperation:
+    """Return one intended evaluation or reject an unknown request ID."""
+    return _evaluation_operation(state, request_id)
+
+
+def _evaluation_operation(state: SessionState, request_id: str) -> EvaluationOperation:
+    for operation in state.evaluation_operations:
+        if operation.request.request_id == request_id:
+            return operation
+    raise TransitionError("evaluation does not link to an intended operation")
+
+
+def _terminalize_evaluation(
+    state: SessionState,
+    operation: EvaluationOperation,
+    terminal_status: EvaluationOperationStatus,
+) -> SessionState:
+    updated = replace(operation, status=terminal_status)
+    result = replace(
+        state,
+        evaluation_operations=_replace_evaluation(state, updated),
+        ledger=state.ledger.settle(operation.reservation, None),
+    )
+    if state.pending_proposal_id != operation.request.request_id:
+        return result
+    status = (
+        SessionStatus.RUNNING if state.status is SessionStatus.WAITING else state.status
+    )
+    return replace(result, status=status, pending_proposal_id=None, wait_reason=None)
+
+
+def _require_new_intake(operation: EvaluationOperation) -> None:
+    if operation.status is EvaluationOperationStatus.VERIFICATION_FAILED:
+        raise TransitionError("evaluation intake follows verification failure")
+    if operation.status is EvaluationOperationStatus.RECEIPT_CONSUMED:
+        raise TransitionError("evaluation intake follows consumed receipt")
+    if operation.status is EvaluationOperationStatus.INTAKE_RECORDED:
+        raise TransitionError("evaluation intake is already recorded")
+
+
+def _require_consumable(operation: EvaluationOperation) -> None:
+    if operation.status in {
+        EvaluationOperationStatus.VERIFICATION_FAILED,
+        EvaluationOperationStatus.RECEIPT_CONSUMED,
+    }:
+        raise TransitionError("evaluation receipt is already terminal")
+    if operation.status is not EvaluationOperationStatus.INTAKE_RECORDED:
+        raise TransitionError("evaluation receipt has no verified intake")
+
+
+def _replace_evaluation(
+    state: SessionState, updated: EvaluationOperation
+) -> tuple[EvaluationOperation, ...]:
+    return tuple(
+        (
+            updated
+            if operation.request.request_id == updated.request.request_id
+            else operation
+        )
+        for operation in state.evaluation_operations
+    )
 
 
 def apply_steer(
@@ -187,6 +381,7 @@ def promote(
         pending_proposal_id=None,
         wait_reason=None,
         status=status,
+        latest_evaluation=None,
     )
 
 

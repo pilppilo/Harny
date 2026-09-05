@@ -22,12 +22,9 @@ from .journal import SqliteJournal
 from .models import (
     ActionProposal,
     Attempt,
-    AttemptDisposition,
-    BudgetLimits,
     Checkpoint,
     CheckpointRequest,
     CommittedNode,
-    CompletionMode,
     EvaluationReceipt,
     EvaluationCommand,
     EvaluationRequest,
@@ -46,17 +43,26 @@ from .models import (
     Steer,
     Stop,
     TaskSpec,
-    UsageMeasurement,
 )
 from .ports import Environment, Evaluator, Runtime
-from .replay import replay
-from .session_state import receipt_from_payload, reservation_from_payload
+from .replay import projection_payload, reduce_event, replay
+from .session_state import (
+    command_from_payload,
+    integer_from_payload,
+    receipt_from_payload,
+    reservation_from_payload,
+    string_from_payload,
+)
 from .transitions import (
     SessionState,
-    UsageLedger,
     apply_steer,
+    consume_evaluation,
+    fail_evaluation_verification,
+    intend_action,
+    intend_evaluation,
     promote,
     promotion_disposition,
+    record_evaluation_intake,
     record_receipt_state,
     start_attempt,
 )
@@ -126,7 +132,11 @@ class Session:
             runtime=runtime,
             evaluator=evaluator,
         )
-        session._persist("session_created", state, {"environment": contract})
+        session._persist(
+            "session_created",
+            state,
+            {"task": task, "root_node": root, "environment": contract},
+        )
         return session
 
     @classmethod
@@ -171,9 +181,11 @@ class Session:
                 session._reservations[parsed.operation_id] = parsed
             proposal = event.payload.get("proposal")
             if event.kind == "action_intended" and isinstance(proposal, Mapping):
-                session._proposal_attempts[_string(proposal, "proposal_id")] = (
-                    _string(proposal, "attempt_id"),
-                    _integer(proposal, "objective_version"),
+                session._proposal_attempts[
+                    string_from_payload(proposal, "proposal_id")
+                ] = (
+                    string_from_payload(proposal, "attempt_id"),
+                    integer_from_payload(proposal, "objective_version"),
                 )
             receipt = event.payload.get("receipt")
             if event.kind == "receipt_received" and isinstance(receipt, Mapping):
@@ -181,20 +193,20 @@ class Session:
                 session._receipts[parsed_receipt.receipt_id] = parsed_receipt
             command_data = event.payload.get("command")
             if event.kind == "command_admitted" and isinstance(command_data, Mapping):
-                command = _command_from_payload(command_data)
+                command = command_from_payload(command_data)
                 admitted[command.command_id] = command
             if event.kind in ("command_applied", "command_rejected"):
                 command_id = event.payload.get("command_id")
                 if isinstance(command_id, str):
                     applied.add(command_id)
             if event.kind != "command_admitted" and isinstance(command_data, Mapping):
-                applied.add(_string(command_data, "command_id"))
+                applied.add(string_from_payload(command_data, "command_id"))
             if event.kind == "receipt_received":
                 receipt_data = event.payload.get("receipt")
                 if isinstance(receipt_data, Mapping):
-                    status = _string(receipt_data, "status")
+                    status = string_from_payload(receipt_data, "status")
                     if status not in ("accepted", "running"):
-                        proposal_id = _string(receipt_data, "proposal_id")
+                        proposal_id = string_from_payload(receipt_data, "proposal_id")
                         session._settled_operations.add(proposal_id)
         session._commands = admitted
         session._inbox = [
@@ -305,7 +317,9 @@ class Session:
             actions=1,
             cost=reservation_cost,
         )
-        ledger = self._state.ledger.reserve(reservation, self._state.task.budgets)
+        intended = intend_action(
+            self._state, proposal_id, attempt.attempt_id, reservation
+        )
         proposal = ActionProposal(
             proposal_id=proposal_id,
             session_id=self._session_id,
@@ -317,13 +331,6 @@ class Session:
             reservation=reservation,
             rationale=rationale,
             idempotency_key=proposal_id if contract.capabilities.idempotency else None,
-        )
-        intended = replace(
-            self._state,
-            status=SessionStatus.WAITING,
-            pending_proposal_id=proposal_id,
-            wait_reason="runtime receipt pending",
-            ledger=ledger,
         )
         self._reservations[proposal_id] = reservation
         self._proposal_attempts[proposal_id] = (
@@ -355,6 +362,8 @@ class Session:
             self._state, receipt.proposal_id, receipt.status.value
         )
         proposal_attempt = self._proposal_attempts.get(receipt.proposal_id)
+        if proposal_attempt is None:
+            raise IntegrityError("receipt is missing durable proposal ownership")
         applies_to_active_attempt = (
             proposal_attempt
             == (
@@ -376,18 +385,30 @@ class Session:
                     state.active_attempt, result_state=receipt.state
                 ),
             )
-        if (
-            receipt.status
-            not in (
-                ExecutionStatus.ACCEPTED,
-                ExecutionStatus.RUNNING,
-            )
+        settles_operation = (
+            receipt.status not in (ExecutionStatus.ACCEPTED, ExecutionStatus.RUNNING)
             and receipt.proposal_id not in self._settled_operations
-        ):
+        )
+        if settles_operation:
             state = replace(
                 state, ledger=state.ledger.settle(reservation, receipt.usage)
             )
-        self._persist("receipt_received", state, {"receipt": receipt})
+            state = replace(
+                state,
+                action_operations=tuple(
+                    (
+                        (*operation[:4], True)
+                        if operation[0] == receipt.proposal_id
+                        else operation
+                    )
+                    for operation in state.action_operations
+                ),
+            )
+        self._persist(
+            "receipt_received",
+            state,
+            {"receipt": receipt},
+        )
         self._receipts[receipt.receipt_id] = receipt
         if receipt.status not in (ExecutionStatus.ACCEPTED, ExecutionStatus.RUNNING):
             self._settled_operations.add(receipt.proposal_id)
@@ -413,14 +434,7 @@ class Session:
             objective_version=request.objective_version,
             evaluations=1,
         )
-        ledger = self._state.ledger.reserve(reservation, self._state.task.budgets)
-        pending = replace(
-            self._state,
-            status=SessionStatus.WAITING,
-            pending_proposal_id=request.request_id,
-            ledger=ledger,
-            wait_reason="evaluation pending",
-        )
+        pending = intend_evaluation(self._state, request, reservation)
         self._reservations[request.request_id] = reservation
         self._persist(
             "evaluation_intended",
@@ -428,18 +442,20 @@ class Session:
             {"request": request, "reservation": reservation},
         )
         receipt = self._evaluator.evaluate(request)
-        settled = replace(
-            self._state,
-            status=SessionStatus.RUNNING,
-            pending_proposal_id=None,
-            wait_reason=None,
-            ledger=self._state.ledger.settle(reservation, None),
-        )
-        disposition = promotion_disposition(settled, request, receipt)
+        disposition = promotion_disposition(self._state, request, receipt)
         self._persist(
             "evaluation_intake",
-            settled,
-            {"receipt_id": receipt.receipt_id, "raw_receipt": canonical_json(receipt)},
+            record_evaluation_intake(
+                self._state,
+                request.request_id,
+                receipt.receipt_id,
+                canonical_json(receipt),
+            ),
+            {
+                "request_id": request.request_id,
+                "receipt_id": receipt.receipt_id,
+                "raw_receipt": canonical_json(receipt),
+            },
         )
         try:
             for evidence in receipt.evidence:
@@ -447,18 +463,34 @@ class Session:
         except IntegrityError as exc:
             self._persist(
                 "evaluation_verification_failed",
-                settled,
-                {"receipt_id": receipt.receipt_id, "reason": str(exc)},
+                fail_evaluation_verification(
+                    self._state, request.request_id, receipt.receipt_id
+                ),
+                {
+                    "request_id": request.request_id,
+                    "receipt_id": receipt.receipt_id,
+                    "reason": str(exc),
+                },
             )
             raise
         self._persist(
             "evaluation_received",
-            settled,
-            {"receipt": receipt, "disposition": disposition.value},
+            consume_evaluation(self._state, receipt, disposition),
+            {
+                "receipt": receipt,
+                "disposition": disposition.value,
+            },
         )
         if disposition is PromotionDisposition.ACCEPTED:
             promoted = promote(self._state, request, receipt, _new_id("node"))
-            self._persist("lineage_promoted", promoted, {"receipt": receipt})
+            self._persist(
+                "lineage_promoted",
+                promoted,
+                {
+                    "node": promoted.lineage_head,
+                    "evaluation_receipt_id": receipt.receipt_id,
+                },
+            )
         return receipt
 
     def reconcile_pending(self) -> SessionView:
@@ -479,7 +511,7 @@ class Session:
 
     def checkpoint(self) -> Checkpoint:
         """Persist an explicit checkpoint marker at the current durable state."""
-        snapshot = _state_snapshot(self._state)
+        snapshot = projection_payload(self._state)
         checkpoint = Checkpoint(
             checkpoint_id=_new_id("checkpoint"),
             session_id=self._session_id,
@@ -506,6 +538,7 @@ class Session:
                 "objective_steered",
                 apply_steer(self._state, command.objective, command.success_evidence),
                 {"command": command},
+                causation_id=command.command_id,
             )
             return
         if isinstance(command, Pause):
@@ -513,6 +546,7 @@ class Session:
                 "session_paused",
                 replace(self._state, status=SessionStatus.PAUSED),
                 {"command": command},
+                causation_id=command.command_id,
             )
             return
         if isinstance(command, Resume):
@@ -525,6 +559,7 @@ class Session:
                 "session_resumed",
                 replace(self._state, status=status),
                 {"command": command},
+                causation_id=command.command_id,
             )
             return
         if isinstance(command, Stop):
@@ -532,6 +567,7 @@ class Session:
                 "session_stopped",
                 replace(self._state, status=SessionStatus.STOPPED),
                 {"command": command},
+                causation_id=command.command_id,
             )
             return
         if isinstance(command, CheckpointRequest):
@@ -556,12 +592,17 @@ class Session:
             sequence=self._cursor + 1,
             kind=kind,
             objective_version=state.task.objective_version,
-            payload={"snapshot": _state_snapshot(state), **to_json_value(fields)},
+            payload=to_json_value(fields),
             recorded_at=datetime.now(timezone.utc).isoformat(),
             causation_id=causation_id,
         )
+        derived = reduce_event(None if self._cursor == 0 else self._state, event)
+        if derived != state:
+            raise IntegrityError(
+                f"{kind} does not derive the requested durable session projection"
+            )
         self._cursor = self._journal.append((event,), expected_cursor=self._cursor)
-        self._state = state
+        self._state = derived
         return event
 
     def _require_schedulable(self) -> None:
@@ -633,234 +674,3 @@ def _validate_action_arguments(
             raise ContractError(f"action argument {name!r} must be an integer")
         if declared_type == "boolean" and not isinstance(value, bool):
             raise ContractError(f"action argument {name!r} must be a boolean")
-
-
-def _command_from_payload(value: Mapping[str, object]) -> OperatorCommand:
-    """Decode an admitted command once while rebuilding its durable inbox."""
-    command_id = _string(value, "command_id")
-    session_id = _string(value, "session_id")
-    command_type = _string(value, "__type__") if "__type__" in value else None
-    # Older journal payloads have no type marker and cannot be admitted commands.
-    if command_type == "Message":
-        return Message(command_id, session_id, _string(value, "text"))
-    if command_type == "Steer":
-        return Steer(
-            command_id,
-            session_id,
-            _string(value, "objective"),
-            _string(value, "success_evidence"),
-        )
-    if command_type == "Pause":
-        return Pause(command_id, session_id)
-    if command_type == "Resume":
-        return Resume(command_id, session_id)
-    if command_type == "Stop":
-        return Stop(command_id, session_id)
-    if command_type == "CheckpointRequest":
-        return CheckpointRequest(command_id, session_id)
-    if command_type == "EvaluationCommand":
-        return EvaluationCommand(
-            command_id, session_id, _state_ref_from(_mapping(value, "state"))
-        )
-    raise IntegrityError("admitted command has an unsupported type")
-
-
-def _state_snapshot(state: SessionState) -> Mapping[str, object]:
-    return {
-        "task": state.task,
-        "status": state.status,
-        "lineage_head": state.lineage_head,
-        "active_attempt": state.active_attempt,
-        "pending_proposal_id": state.pending_proposal_id,
-        "wait_reason": state.wait_reason,
-        "ledger": state.ledger,
-    }
-
-
-def _state_from_snapshot(value: Mapping[str, object]) -> SessionState:
-    task_data = _mapping(value, "task")
-    budget_data = _mapping(task_data, "budgets")
-    task = TaskSpec(
-        task_id=_string(task_data, "task_id"),
-        objective=_string(task_data, "objective"),
-        completion_mode=CompletionMode(_string(task_data, "completion_mode")),
-        success_evidence=_string(task_data, "success_evidence"),
-        budgets=BudgetLimits(
-            actions=_optional_int(budget_data, "actions"),
-            model_calls=_optional_int(budget_data, "model_calls"),
-            evaluations=_optional_int(budget_data, "evaluations"),
-            cost=_optional_decimal(budget_data, "cost"),
-        ),
-        environment_id=_string(task_data, "environment_id"),
-        evaluation_contract_id=_string(task_data, "evaluation_contract_id"),
-        objective_version=_integer(task_data, "objective_version"),
-        constraints=tuple(_strings(task_data.get("constraints", []), "constraints")),
-    )
-    node_data = _mapping(value, "lineage_head")
-    head = CommittedNode(
-        node_id=_string(node_data, "node_id"),
-        objective_version=_integer(node_data, "objective_version"),
-        state=_state_ref_from(_mapping(node_data, "state")),
-        parent_id=_optional_string(node_data, "parent_id"),
-        evaluation_receipt_id=_optional_string(node_data, "evaluation_receipt_id"),
-        objectives=_mapping_or_empty(node_data, "objectives"),
-    )
-    active_data = value.get("active_attempt")
-    active = (
-        None
-        if active_data is None
-        else _attempt_from(_mapping_value(active_data, "active_attempt"))
-    )
-    ledger_data = _mapping(value, "ledger")
-    ledger = UsageLedger(
-        actions=_integer(ledger_data, "actions"),
-        evaluations=_integer(ledger_data, "evaluations"),
-        cost=_decimal(ledger_data, "cost"),
-        unsettled_cost=_optional_decimal(ledger_data, "unsettled_cost"),
-    )
-    return SessionState(
-        task=task,
-        status=SessionStatus(_string(value, "status")),
-        lineage_head=head,
-        active_attempt=active,
-        pending_proposal_id=_optional_string(value, "pending_proposal_id"),
-        wait_reason=_optional_string(value, "wait_reason"),
-        ledger=ledger,
-    )
-
-
-def _attempt_from(value: Mapping[str, object]) -> Attempt:
-    result = value.get("result_state")
-    return Attempt(
-        attempt_id=_string(value, "attempt_id"),
-        objective_version=_integer(value, "objective_version"),
-        base_node_id=_string(value, "base_node_id"),
-        starting_state=_state_ref_from(_mapping(value, "starting_state")),
-        disposition=AttemptDisposition(_string(value, "disposition")),
-        result_state=(
-            None
-            if result is None
-            else _state_ref_from(_mapping_value(result, "result_state"))
-        ),
-    )
-
-
-def _reservation_from_payload(value: Mapping[str, object]) -> ResourceReservation:
-    return ResourceReservation(
-        reservation_id=_string(value, "reservation_id"),
-        operation_id=_string(value, "operation_id"),
-        objective_version=_integer(value, "objective_version"),
-        actions=_integer(value, "actions"),
-        evaluations=_integer(value, "evaluations"),
-        cost=_optional_decimal(value, "cost"),
-    )
-
-
-def _receipt_from_payload(value: Mapping[str, object]) -> ExecutionReceipt:
-    state = value.get("state")
-    usage = value.get("usage")
-    return ExecutionReceipt(
-        receipt_id=_string(value, "receipt_id"),
-        proposal_id=_string(value, "proposal_id"),
-        objective_version=_integer(value, "objective_version"),
-        status=ExecutionStatus(_string(value, "status")),
-        operation_id=_optional_string(value, "operation_id"),
-        state=(
-            None if state is None else _state_ref_from(_mapping_value(state, "state"))
-        ),
-        error=_optional_string(value, "error"),
-        usage=(
-            None
-            if usage is None
-            else _usage_from_payload(_mapping_value(usage, "usage"))
-        ),
-    )
-
-
-def _usage_from_payload(value: Mapping[str, object]) -> UsageMeasurement:
-    return UsageMeasurement(
-        measurement_id=_string(value, "measurement_id"),
-        actions=_integer(value, "actions"),
-        model_calls=_integer(value, "model_calls"),
-        evaluations=_integer(value, "evaluations"),
-        cost=_optional_decimal(value, "cost"),
-    )
-
-
-def _state_ref_from(value: Mapping[str, object]) -> StateRef:
-    restorable = value.get("restorable", False)
-    if not isinstance(restorable, bool):
-        raise IntegrityError("snapshot restorable must be a boolean")
-    return StateRef(
-        owner=_string(value, "owner"),
-        value=_string(value, "value"),
-        digest=_optional_string(value, "digest"),
-        revision=_optional_string(value, "revision"),
-        restorable=restorable,
-    )
-
-
-def _mapping(value: Mapping[str, object], name: str) -> Mapping[str, object]:
-    return _mapping_value(value.get(name), name)
-
-
-def _mapping_value(value: object, name: str) -> Mapping[str, object]:
-    if not isinstance(value, Mapping):
-        raise IntegrityError(f"snapshot {name} must be an object")
-    return value
-
-
-def _mapping_or_empty(value: Mapping[str, object], name: str) -> Mapping[str, object]:
-    candidate = value.get(name, {})
-    return _mapping_value(candidate, name)
-
-
-def _string(value: Mapping[str, object], name: str) -> str:
-    candidate = value.get(name)
-    if not isinstance(candidate, str):
-        raise IntegrityError(f"snapshot {name} must be a string")
-    return candidate
-
-
-def _optional_string(value: Mapping[str, object], name: str) -> str | None:
-    candidate = value.get(name)
-    if candidate is not None and not isinstance(candidate, str):
-        raise IntegrityError(f"snapshot {name} must be a string or null")
-    return candidate
-
-
-def _integer(value: Mapping[str, object], name: str) -> int:
-    candidate = value.get(name)
-    if isinstance(candidate, bool) or not isinstance(candidate, int):
-        raise IntegrityError(f"snapshot {name} must be an integer")
-    return candidate
-
-
-def _optional_int(value: Mapping[str, object], name: str) -> int | None:
-    candidate = value.get(name)
-    if candidate is None:
-        return None
-    if isinstance(candidate, bool) or not isinstance(candidate, int):
-        raise IntegrityError(f"snapshot {name} must be an integer or null")
-    return candidate
-
-
-def _decimal(value: Mapping[str, object], name: str) -> Decimal:
-    return Decimal(_string(value, name))
-
-
-def _optional_decimal(value: Mapping[str, object], name: str) -> Decimal | None:
-    candidate = value.get(name)
-    if candidate is None:
-        return None
-    if not isinstance(candidate, str):
-        raise IntegrityError(f"snapshot {name} must be a decimal string or null")
-    return Decimal(candidate)
-
-
-def _strings(value: object, name: str) -> tuple[str, ...]:
-    if not isinstance(value, (list, tuple)) or not all(
-        isinstance(item, str) for item in value
-    ):
-        raise IntegrityError(f"snapshot {name} must be an array of strings")
-    return tuple(value)
